@@ -320,7 +320,7 @@ def update_stats(stats, active_signals, total_signals_delta=0, successful_delta=
     stats["total_profit_loss"] += profit_delta
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=20000000):
+async def get_active_high_volume_usdt_pairs(min_volume=40000000):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -429,12 +429,14 @@ def save_all_state(active_signals, waiting_signals, successful_signals, failed_s
             "last_update": str(datetime.now())
         }, f, ensure_ascii=False, indent=2)
 
-def print_stats(stats):
+def print_stats(stats, waiting_signals=None):
     print(f"📊 İSTATİSTİK ÖZETİ:")
     print(f"   Toplam Sinyal: {stats['total_signals']}")
     print(f"   Başarılı: {stats['successful_signals']}")
     print(f"   Başarısız: {stats['failed_signals']}")
     print(f"   Aktif Sinyal: {stats['active_signals_count']}")
+    if waiting_signals is not None:
+        print(f"   Bekleyen Sinyal: {len(waiting_signals)}")
     print(f"   Toplam Görülen Coin: {stats['tracked_coins_count']}")
     print(f"   100$ Yatırım Toplam Kar/Zarar: ${stats['total_profit_loss']:.2f}")
 
@@ -475,7 +477,7 @@ async def main_loop():
     
     while True:
         try:
-            symbols = await get_active_high_volume_usdt_pairs(min_volume=20000000)
+            symbols = await get_active_high_volume_usdt_pairs(min_volume=40000000)
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             stats['tracked_coins_count'] = len(tracked_coins)  # İstatistikleri güncelle
             
@@ -596,15 +598,14 @@ async def main_loop():
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_telegram_message(msg)
                                 cooldown_signals[(symbol, "ALIS")] = datetime.now()
-                                
-                                # Başarılı sinyal olarak kaydet
-                                profit_percent = ((last_price - pos["open_price"]) / pos["open_price"]) * 100
-                                profit_usd = 100 * (profit_percent / 100) * pos.get("leverage", 1)  # 100$ yatırım ve kaldıraç etkisi
+                                # Kar/zarar sabit: %2 kar, 100$ yatırım, kaldıraçlı
+                                profit_percent = 2.0
+                                profit_usd = 100 * (profit_percent / 100) * pos.get("leverage", 1)
                                 successful_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
                                     "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
+                                    "exit_price": format_price(pos["target"], pos["open_price"]),
                                     "target_price": format_price(pos["target"], pos["open_price"]),
                                     "stop_loss": format_price(pos["stop"], pos["open_price"]),
                                     "signals": pos["signals"],
@@ -616,21 +617,16 @@ async def main_loop():
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
-                                
                                 # İstatistikleri güncelle (kar ekle)
                                 update_stats(stats, active_signals, total_signals_delta=-1, successful_delta=1, profit_delta=profit_usd)
-                                
                                 if symbol in active_signals:
                                     del active_signals[symbol]
-                                
                                 del positions[symbol]
                             elif last_price <= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
                                 await send_telegram_message(msg)
                                 cooldown_signals[(symbol, "ALIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
-                                
-                                # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
                                 stopped_coins[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
@@ -639,25 +635,23 @@ async def main_loop():
                                     "target_price": format_price(pos["target"], pos["open_price"]),
                                     "stop_loss": format_price(pos["stop"], pos["open_price"]),
                                     "signals": pos["signals"],
-                                    "min_price": format_price(last_price, pos["open_price"]) if pos["type"] == "ALIŞ" else None,
-                                    "max_price": format_price(last_price, pos["open_price"]) if pos["type"] == "SATIŞ" else None,
-                                    "max_drawdown_percent": 0.0 if pos["type"] == "ALIŞ" else None,
-                                    "max_drawup_percent": 0.0 if pos["type"] == "SATIŞ" else None,
+                                    "min_price": format_price(last_price, pos["open_price"]),
+                                    "max_price": None,
+                                    "max_drawdown_percent": 0.0,
+                                    "max_drawup_percent": None,
                                     "reached_target": False
                                 }
-                                
-                                # Stop anında dosyaya kaydet (hemen yaz)
                                 info_to_save = {k: v for k, v in stopped_coins[symbol].items() if k in ["symbol", "type", "entry_price", "stop_time", "target_price", "stop_loss", "signals", "min_price", "max_drawdown_percent", "reached_target"]}
                                 with open(f'stopped_{symbol}.json', 'w', encoding='utf-8') as f:
                                     json.dump(info_to_save, f, ensure_ascii=False, indent=2)
-                                # Başarısız sinyal olarak kaydet
-                                loss_percent = ((last_price - pos["open_price"]) / pos["open_price"]) * 100
-                                loss_usd = 100 * (loss_percent / 100) * pos.get("leverage", 1)  # 100$ yatırım ve kaldıraç etkisi
+                                # Zarar sabit: -%1 zarar, 100$ yatırım, kaldıraçlı
+                                loss_percent = -1.0
+                                loss_usd = 100 * (loss_percent / 100) * pos.get("leverage", 1)
                                 failed_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
                                     "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
+                                    "exit_price": format_price(pos["stop"], pos["open_price"]),
                                     "target_price": format_price(pos["target"], pos["open_price"]),
                                     "stop_loss": format_price(pos["stop"], pos["open_price"]),
                                     "signals": pos["signals"],
@@ -669,28 +663,23 @@ async def main_loop():
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
-                                
-                                # İstatistikleri güncelle (zarar ekle)
                                 update_stats(stats, active_signals, total_signals_delta=-1, failed_delta=1, profit_delta=loss_usd)
-                                
                                 if symbol in active_signals:
                                     del active_signals[symbol]
-                                
                                 del positions[symbol]
                         elif pos["type"] == "SATIŞ":
                             if last_price <= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_telegram_message(msg)
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
-                                
-                                # Başarılı sinyal olarak kaydet
-                                profit_percent = ((pos["open_price"] - last_price) / pos["open_price"]) * 100
-                                profit_usd = 100 * (profit_percent / 100) * pos.get("leverage", 1)  # 100$ yatırım ve kaldıraç etkisi
+                                # Kar/zarar sabit: %2 kar, 100$ yatırım, kaldıraçlı
+                                profit_percent = 2.0
+                                profit_usd = 100 * (profit_percent / 100) * pos.get("leverage", 1)
                                 successful_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
                                     "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
+                                    "exit_price": format_price(pos["target"], pos["open_price"]),
                                     "target_price": format_price(pos["target"], pos["open_price"]),
                                     "stop_loss": format_price(pos["stop"], pos["open_price"]),
                                     "signals": pos["signals"],
@@ -702,21 +691,15 @@ async def main_loop():
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
-                                
-                                # İstatistikleri güncelle (kar ekle)
                                 update_stats(stats, active_signals, total_signals_delta=-1, successful_delta=1, profit_delta=profit_usd)
-                                
                                 if symbol in active_signals:
                                     del active_signals[symbol]
-                                
                                 del positions[symbol]
-                            # SATIŞ için stop anında dosyaya yazma eksik, ekle
                             elif last_price >= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
                                 await send_telegram_message(msg)
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
-                                # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
                                 stopped_coins[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
@@ -731,18 +714,17 @@ async def main_loop():
                                     "max_drawup_percent": 0.0,
                                     "reached_target": False
                                 }
-                                # Stop anında dosyaya kaydet (hemen yaz)
                                 info_to_save = {k: v for k, v in stopped_coins[symbol].items() if k in ["symbol", "type", "entry_price", "stop_time", "target_price", "stop_loss", "signals", "max_price", "max_drawup_percent", "reached_target"]}
                                 with open(f'stopped_{symbol}.json', 'w', encoding='utf-8') as f:
                                     json.dump(info_to_save, f, ensure_ascii=False, indent=2)
-                                # Başarısız sinyal olarak kaydet
-                                loss_percent = ((pos["open_price"] - last_price) / pos["open_price"]) * 100
+                                # Zarar sabit: -%1 zarar, 100$ yatırım, kaldıraçlı
+                                loss_percent = -1.0
                                 loss_usd = 100 * (loss_percent / 100) * pos.get("leverage", 1)
                                 failed_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
                                     "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
+                                    "exit_price": format_price(pos["stop"], pos["open_price"]),
                                     "target_price": format_price(pos["target"], pos["open_price"]),
                                     "stop_loss": format_price(pos["stop"], pos["open_price"]),
                                     "signals": pos["signals"],
@@ -754,7 +736,6 @@ async def main_loop():
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
-                                # İstatistikleri güncelle (zarar ekle)
                                 update_stats(stats, active_signals, total_signals_delta=-1, failed_delta=1, profit_delta=loss_usd)
                                 if symbol in active_signals:
                                     del active_signals[symbol]
@@ -1017,7 +998,7 @@ async def main_loop():
                 print("📊 Mevcut durum kaydedildi, değişiklikler aranıyor...")
             
             save_all_state(active_signals, waiting_signals, successful_signals, failed_signals)
-            print_stats(stats)
+            print_stats(stats, waiting_signals)
             await asyncio.sleep(5)
         except Exception as e:
             print(f"Genel hata: {e}")

@@ -320,7 +320,7 @@ def update_stats(stats, active_signals, total_signals_delta=0, successful_delta=
     stats["total_profit_loss"] += profit_delta
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---
-async def get_active_high_volume_usdt_pairs(min_volume=40000000):
+async def get_active_high_volume_usdt_pairs(min_volume=45000000):
     """
     Sadece spotta aktif, USDT bazlı ve 24s hacmi min_volume üstü tüm coinleri döndürür.
     1 günlük (1d) verisi 30'dan az olan yeni coinler otomatik olarak atlanır.
@@ -477,7 +477,7 @@ async def main_loop():
     
     while True:
         try:
-            symbols = await get_active_high_volume_usdt_pairs(min_volume=40000000)
+            symbols = await get_active_high_volume_usdt_pairs(min_volume=45000000)
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             stats['tracked_coins_count'] = len(tracked_coins)  # İstatistikleri güncelle
             

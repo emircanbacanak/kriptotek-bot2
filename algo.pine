@@ -1,0 +1,329 @@
+//@version=6
+indicator(title="Kriptotek Nokta Atışı Pivot", shorttitle="Kriptotek Nokta Atışı Pivot", overlay=true)
+
+// Global Input Değeri
+fibFilterEnabled = input.bool(false, title='Fibonacci Filtre Aktif')
+
+// Sinyal hesaplamasını fonksiyon içerisine alıyoruz
+f_getSignal() =>
+    // Zaman Dilimine Göre Dinamik Parametreler
+    isHigherTF = timeframe.period == 'D' or timeframe.period == '240' or timeframe.period == 'W'
+    isWeekly   = timeframe.period == '1W'
+    isDaily    = timeframe.period == '1D'
+    is4H     = timeframe.period == '240'
+    rsiLength = isWeekly ? 28 : isDaily ? 21 : is4H ? 18 : 14       // Büyük zaman dilimlerinde RSI daha uzun
+    macdFast   = isWeekly ? 18 : isDaily ? 13 : is4H ? 11 : 10
+    macdSlow   = isWeekly ? 36 : isDaily ? 26 : is4H ? 22 : 20
+    macdSignal = isWeekly ? 12 : isDaily ? 10 : is4H ? 8  : 9
+    shortMAPeriod = isWeekly ? 30 : isDaily ? 20 : is4H ? 12 : 9
+    longMAPeriod  = isWeekly ? 150 : isDaily ? 100 : is4H ? 60 : 50
+    mfiLength = isWeekly ? 25 : isDaily ? 20 : is4H ? 16 : 14        // Büyük zaman dilimlerinde MFI daha uzun
+    fibLookback = isWeekly ? 150 : isDaily ? 100 : is4H ? 70 : 50      // Büyük zaman dilimlerinde daha geniş fib hesaplaması
+
+    // Trend Doğrulama
+    ema200      = ta.ema(close, 200)
+    trendBullish = close > ema200
+    trendBearish = close < ema200
+
+    // RSI Ayarları
+    rsiOverbought = isHigherTF ? 60 : 60
+    rsiOversold   = isHigherTF ? 40 : 40
+    rsiValue      = ta.rsi(close, rsiLength)
+
+    // MACD Ayarları
+    [macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+    // Supertrend Ayarları
+    atrPeriod     = is4H ? 7 : 10
+    atrDynamic    = ta.sma(ta.atr(atrPeriod), 5)
+    atrMultiplier = isWeekly ? atrDynamic / 2 : isDaily ? atrDynamic / 1.2 : is4H ? atrDynamic / 1.3 : atrDynamic / 1.5
+    [supertrend, supertrendDirection] = ta.supertrend(atrMultiplier, atrPeriod)
+
+    // Hareketli Ortalama Ayarları
+    shortMA  = ta.ema(close, shortMAPeriod)
+    longMA   = ta.ema(close, longMAPeriod)
+    maBullish = shortMA > longMA
+    maBearish = shortMA < longMA
+
+    // Hacim Analizi
+    volumeMAPeriod = 20
+    enoughVolume   = volume > ta.sma(volume, volumeMAPeriod) * (isHigherTF ? 0.15 : 0.4)
+
+    // Para Akışı Endeksi (MFI)
+    typicalPrice  = (high + low + close) / 3
+    moneyFlow     = typicalPrice * volume
+    positiveFlow  = ta.cum(ta.valuewhen(typicalPrice > typicalPrice[1], moneyFlow, 0))
+    negativeFlow  = ta.cum(ta.valuewhen(typicalPrice < typicalPrice[1], moneyFlow, 0))
+    mfi           = 100 - 100 / (1 + positiveFlow / negativeFlow)
+    mfiBullish    = mfi < 65
+    mfiBearish    = mfi > 35
+
+    // Fibonacci Geri Çekilme Seviyeleri
+    fibLevel1 = ta.valuewhen(high == ta.highest(high, fibLookback), high, 0) * 0.618
+    fibLevel2 = ta.valuewhen(low == ta.lowest(low, fibLookback), low, 0) * 1.382
+    fibInRange = fibFilterEnabled ? (close > fibLevel1 and close < fibLevel2) : true
+
+    // AL-SAT Koşulları
+    buySignal  = (ta.crossover(macdLine, signalLine) or (rsiValue < rsiOversold and supertrendDirection == 1 and maBullish and enoughVolume and mfiBullish and trendBullish)) and fibInRange
+    sellSignal = (ta.crossunder(macdLine, signalLine) or (rsiValue > rsiOverbought and supertrendDirection == -1 and maBearish and enoughVolume and mfiBearish and trendBearish)) and fibInRange
+    buySignal ? "AL" : sellSignal ? "SAT" : "-"
+
+currentSignal = f_getSignal()
+
+// AL-SAT Oklarının Çizimi
+buySignal = currentSignal == "AL"
+sellSignal = currentSignal == "SAT"
+
+// Anlık AL/SAT Okları
+plotshape(series=buySignal, location=location.belowbar, color=color.rgb(0, 255, 0, 60), style=shape.triangleup, title="AL Sinyali", size=size.normal, text="AL", textcolor=color.white)
+plotshape(series=sellSignal, location=location.abovebar, color=color.rgb(255, 0, 0, 60), style=shape.triangledown, title="SAT Sinyali", size=size.normal, text="SAT", textcolor=color.white)
+
+alertcondition(currentSignal == "AL", title='AL Sinyali', message='AL sinyali oluştu')
+alertcondition(currentSignal == "SAT", title='SAT Sinyali', message='SAT sinyali oluştu')
+
+// Sembol listesi ve sinyal hesaplaması
+symbol1 = "BTCUSDT"
+symbol2 = "ETHUSDT"
+symbol3 = "XRPUSDT"
+symbol4 = "BNBUSDT"
+symbol5 = "SOLUSDT"
+symbol6 = "ADAUSDT"
+symbol7 = "DOGEUSDT"
+
+symSignal1 = request.security(symbol1, timeframe.period, f_getSignal())
+symSignal2 = request.security(symbol2, timeframe.period, f_getSignal())
+symSignal3 = request.security(symbol3, timeframe.period, f_getSignal())
+symSignal4 = request.security(symbol4, timeframe.period, f_getSignal())
+symSignal5 = request.security(symbol5, timeframe.period, f_getSignal())
+symSignal6 = request.security(symbol4, timeframe.period, f_getSignal())
+symSignal7 = request.security(symbol5, timeframe.period, f_getSignal())
+
+// Sinyal Kaydı İçin Değişkenler
+var string lastSymSignal1 = "-"
+var string lastSymSignal2 = "-"
+var string lastSymSignal3 = "-"
+var string lastSymSignal4 = "-"
+var string lastSymSignal5 = "-"
+var string lastSymSignal6 = "-"
+var string lastSymSignal7 = "-"
+
+// Her sembol için en son sinyalin kaydedilmesi
+lastSymSignal1 := symSignal1 != "-" ? symSignal1 : lastSymSignal1[1]
+lastSymSignal2 := symSignal2 != "-" ? symSignal2 : lastSymSignal2[1]
+lastSymSignal3 := symSignal3 != "-" ? symSignal3 : lastSymSignal3[1]
+lastSymSignal4 := symSignal4 != "-" ? symSignal4 : lastSymSignal4[1]
+lastSymSignal5 := symSignal5 != "-" ? symSignal5 : lastSymSignal5[1]
+lastSymSignal6 := symSignal6 != "-" ? symSignal6 : lastSymSignal6[1]
+lastSymSignal7 := symSignal7 != "-" ? symSignal7 : lastSymSignal7[1]
+
+// Tablo oluşturma
+var table myTable = table.new(position.top_right, 2, 8, border_width=1)
+if bar_index == 0
+    table.cell(myTable, 0, 0, 'Sembol', text_color=color.rgb(255,255,255,50), bgcolor=color.rgb(0,140,255,80))
+    table.cell(myTable, 1, 0, 'Sinyal', text_color=color.rgb(255,255,255,50), bgcolor=color.rgb(0,140,255,80))
+
+// Tablo hücreleri
+table.cell(myTable, 0, 1, symbol1, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 1, lastSymSignal1, text_color = lastSymSignal1 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal1 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+table.cell(myTable, 0, 2, symbol2, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 2, lastSymSignal2, text_color = lastSymSignal2 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal2 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+table.cell(myTable, 0, 3, symbol3, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 3, lastSymSignal3, text_color = lastSymSignal3 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal3 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+table.cell(myTable, 0, 4, symbol4, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 4, lastSymSignal4, text_color = lastSymSignal4 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal4 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+table.cell(myTable, 0, 5, symbol5, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 5, lastSymSignal5, text_color = lastSymSignal5 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal5 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+table.cell(myTable, 0, 6, symbol6, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 6, lastSymSignal6, text_color = lastSymSignal6 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal6 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+table.cell(myTable, 0, 7, symbol7, text_color=color.rgb(255,255,255,50))
+table.cell(myTable, 1, 7, lastSymSignal7, text_color = lastSymSignal7 == "AL" ? color.rgb(0,255,8,50) : lastSymSignal7 == "SAT" ? color.rgb(255,0,0,50) : color.rgb(255,255,255,50))
+
+// Ichimoku Bulutu Parametreleri
+conversionPeriods   = input.int(9, title="Conversion Line Periods")
+basePeriods         = input.int(26, title="Base Line Periods")
+laggingSpan2Periods = input.int(52, title="Lagging Span 2 Periods")
+displacement        = input.int(26, title="Displacement")
+
+// Ichimoku Bulutu Hesaplamaları
+conversionLine = (ta.highest(high, conversionPeriods) + ta.lowest(low, conversionPeriods)) / 2
+baseLine       = (ta.highest(high, basePeriods) + ta.lowest(low, basePeriods)) / 2
+leadingSpanA   = (conversionLine + baseLine) / 2
+leadingSpanB   = (ta.highest(high, laggingSpan2Periods) + ta.lowest(low, laggingSpan2Periods)) / 2
+laggingSpan    = close[displacement]
+
+// Ichimoku Bulutu Çizimi
+plotLeadingSpanA = plot(leadingSpanA, color=color.new(color.green, 100), title="Leading Span A")
+plotLeadingSpanB = plot(leadingSpanB, color=color.new(color.red, 100), title="Leading Span B")
+fill(plotLeadingSpanA, plotLeadingSpanB, color = leadingSpanA > leadingSpanB ? color.rgb(0, 255, 0, 93) : color.rgb(255, 0, 0, 93), title="Ichimoku Cloud")
+
+// Pivot Points Standard Indicator Integration
+pivotTypeInput = input.string(title="Type", defval="Fibonacci", options=["Traditional", "Fibonacci", "Woodie", "Classic", "DM", "Camarilla"], inline="Pivot", display=display.none)
+pivotAnchorInput = input.string(title="Pivots Timeframe", defval="Auto", options=["Auto", "Daily", "Weekly", "Monthly", "Quarterly", "Yearly", "Biyearly", "Triyearly", "Quinquennially", "Decennially"], inline="Pivot", display=display.none)
+maxHistoricalPivotsInput = input.int(title="Number of Pivots Back", defval=15, minval=1, maxval=200, display = display.data_window)
+isDailyBasedInput = input.bool(title="Use Daily-based Values", defval=true, display = display.data_window, tooltip="When this option is unchecked, Pivot Points will use intraday data while calculating on intraday charts. If Extended Hours are displayed on the chart, they will be taken into account during the pivot level calculation. If intraday OHLC values are different from daily-based values (normal for stocks), the pivot levels will also differ.")
+showLabelsInput = input.bool(title="Show Labels", defval=true, group="labels", display = display.data_window)
+showPricesInput = input.bool(title="Show Prices", defval=true, group="labels", display = display.data_window)
+positionLabelsInput = input.string("Left", "Labels Position", options=["Left", "Right"], group="labels", display = display.data_window)
+linewidthInput = input.int(title="Line Width", defval=1, minval=1, maxval=100, group="levels", display = display.data_window)
+
+DEFAULT_COLOR = #FB8C00
+pcolor=#ffffff
+pColorInput = input.color(pcolor, "P‏  ‏  ‏", inline="P", group="levels", display = display.data_window)
+pShowInput = input.bool(true, "", inline="P", group="levels", display = display.data_window)
+s1ColorInput = input.color(DEFAULT_COLOR, "S1", inline="S1/R1" , group="levels", display = display.data_window)
+s1ShowInput = input.bool(true, "", inline="S1/R1", group="levels", display = display.data_window)
+r1ColorInput = input.color(DEFAULT_COLOR, "‏  ‏  ‏  ‏  ‏  ‏  ‏  ‏R1", inline="S1/R1", group="levels", display = display.data_window)
+r1ShowInput = input.bool(true, "", inline="S1/R1", group="levels", display = display.data_window)
+s2ColorInput = input.color(DEFAULT_COLOR, "S2", inline="S2/R2", group="levels", display = display.data_window)
+s2ShowInput = input.bool(true, "", inline="S2/R2", group="levels", display = display.data_window)
+r2ColorInput = input.color(DEFAULT_COLOR, "‏  ‏  ‏  ‏  ‏  ‏  ‏  ‏R2", inline="S2/R2", group="levels", display = display.data_window)
+r2ShowInput = input.bool(true, "", inline="S2/R2", group="levels", tooltip = "Not applicable to DM", display = display.data_window)
+s3ColorInput = input.color(DEFAULT_COLOR, "S3", inline="S3/R3", group="levels", display = display.data_window)
+s3ShowInput = input.bool(true, "", inline="S3/R3", group="levels", display = display.data_window)
+r3ColorInput = input.color(DEFAULT_COLOR, "‏  ‏  ‏  ‏  ‏  ‏  ‏  ‏R3", inline="S3/R3", group="levels", display = display.data_window)
+r3ShowInput = input.bool(true, "", inline="S3/R3", group="levels", tooltip = "Not applicable to DM", display = display.data_window)
+s4ColorInput = input.color(DEFAULT_COLOR, "S4", inline="S4/R4", group="levels", display = display.data_window)
+s4ShowInput = input.bool(true, "", inline="S4/R4", group="levels", display = display.data_window)
+r4ColorInput = input.color(DEFAULT_COLOR, "‏  ‏  ‏  ‏  ‏  ‏  ‏  ‏R4", inline="S4/R4", group="levels", display = display.data_window)
+r4ShowInput = input.bool(true, "", inline="S4/R4", group="levels", tooltip = "Not applicable to: Fibonacci, DM", display = display.data_window)
+s5ColorInput = input.color(DEFAULT_COLOR, "S5", inline="S5/R5", group="levels", display = display.data_window)
+s5ShowInput = input.bool(true, "", inline="S5/R5", group="levels", display = display.data_window)
+r5ColorInput = input.color(DEFAULT_COLOR, "‏  ‏  ‏  ‏  ‏  ‏  ‏  ‏R5", inline="S5/R5", group="levels", display = display.data_window)
+r5ShowInput = input.bool(true, "", inline="S5/R5", group="levels", tooltip = "Not applicable to: Fibonacci, Woodie, Classic, DM", display = display.data_window)
+
+type graphicSettings
+    string levelName
+    color levelColor
+    bool showLevel
+
+var graphicSettingsArray = array.from(
+      graphicSettings.new(" P", pColorInput, pShowInput),
+      graphicSettings.new("R1", r1ColorInput, r1ShowInput), graphicSettings.new("S1", s1ColorInput, s1ShowInput),
+      graphicSettings.new("R2", r2ColorInput, r2ShowInput), graphicSettings.new("S2", s2ColorInput, s2ShowInput),
+      graphicSettings.new("R3", r3ColorInput, r3ShowInput), graphicSettings.new("S3", s3ColorInput, s3ShowInput),
+      graphicSettings.new("R4", r4ColorInput, r4ShowInput), graphicSettings.new("S4", s4ColorInput, s4ShowInput),
+      graphicSettings.new("R5", r5ColorInput, r5ShowInput), graphicSettings.new("S5", s5ColorInput, s5ShowInput))
+
+autoAnchor = switch
+    timeframe.isintraday => timeframe.multiplier <= 15 ? "1D" : "1W"
+    timeframe.isdaily    => "1M"
+    => "12M"
+
+pivotTimeframe = switch pivotAnchorInput
+    "Auto"      => autoAnchor
+    "Daily"     => "1D"
+    "Weekly"    => "1W"
+    "Monthly"   => "1M"
+    "Quarterly" => "3M"
+    => "12M"
+
+//@variable The number of years in the selected Pivot period
+pivotYearMultiplier = switch pivotAnchorInput
+    "Biyearly"       => 2
+    "Triyearly"      => 3
+    "Quinquennially" => 5
+    "Decennially"    => 10
+    => 1
+
+//@variable The number of values in the pivots of the selected type
+numOfPivotLevels = switch pivotTypeInput
+    "Traditional" => 11
+    "Camarilla"   => 11
+    "Woodie"      => 9
+    "Classic"     => 9
+    "Fibonacci"   => 7
+    "DM"          => 3
+
+type pivotGraphic
+    line pivotLine
+    label pivotLabel
+
+method delete(pivotGraphic graphic) =>
+    graphic.pivotLine.delete()
+    graphic.pivotLabel.delete()
+
+var drawnGraphics = matrix.new<pivotGraphic>()
+
+localPivotTimeframeChange = timeframe.change(pivotTimeframe) and year % pivotYearMultiplier == 0
+securityPivotTimeframeChange = timeframe.change(timeframe.period) and year % pivotYearMultiplier == 0
+
+pivotTimeframeChangeCounter(condition) => 
+    var count = 0
+    if condition and bar_index > 0
+        count += 1
+    count
+
+localPivots = ta.pivot_point_levels(pivotTypeInput, localPivotTimeframeChange)
+securityPivotPointsArray = ta.pivot_point_levels(pivotTypeInput, securityPivotTimeframeChange)
+
+securityTimeframe = timeframe.isintraday ? "1D" : timeframe.period
+[securityPivots, securityPivotCounter] = request.security(syminfo.tickerid, pivotTimeframe, [securityPivotPointsArray, pivotTimeframeChangeCounter(securityPivotTimeframeChange)], lookahead = barmerge.lookahead_on)
+pivotPointsArray = isDailyBasedInput ? securityPivots : localPivots
+
+//@function Sets the ending points of the currently active pivots to endTime.
+affixOldPivots(endTime) =>
+    if drawnGraphics.rows() > 0
+        lastGraphics = drawnGraphics.row(drawnGraphics.rows() - 1)
+
+        for graphic in lastGraphics
+            graphic.pivotLine.set_x2(endTime)
+            if positionLabelsInput == "Right"
+                graphic.pivotLabel.set_x(endTime)
+
+//@function Draws pivot lines and labels from startTime to the approximate end of the period.
+drawNewPivots(startTime) =>
+    
+    newGraphics = array.new<pivotGraphic>()
+
+    for [index, coord] in pivotPointsArray
+        levelSettings = graphicSettingsArray.get(index)
+        if not na(coord) and levelSettings.showLevel
+            lineEndTime = startTime + timeframe.in_seconds(pivotTimeframe) * 1000 * pivotYearMultiplier
+            pivotLine = line.new(startTime, coord, lineEndTime, coord, xloc = xloc.bar_time, color=levelSettings.levelColor, width=linewidthInput)
+            pivotLabel = label.new(x = positionLabelsInput == "Left" ? startTime : lineEndTime,
+                               y = coord,
+                               text = (showLabelsInput ? levelSettings.levelName + " " : "") + (showPricesInput ? "(" + str.tostring(coord, format.mintick) + ")" : ""),
+                               style = positionLabelsInput == "Left" ? label.style_label_right : label.style_label_left,
+                               textcolor = levelSettings.levelColor,
+                               color = #00000000,
+                               xloc=xloc.bar_time)
+            
+            newGraphics.push(pivotGraphic.new(pivotLine, pivotLabel))
+    
+    drawnGraphics.add_row(array_id = newGraphics)
+
+    if drawnGraphics.rows() > maxHistoricalPivotsInput
+        oldGraphics = drawnGraphics.remove_row(0)
+        
+        for graphic in oldGraphics
+            graphic.delete()
+
+
+localPivotDrawConditionStatic = not isDailyBasedInput and localPivotTimeframeChange
+securityPivotDrawConditionStatic = isDailyBasedInput and securityPivotCounter != securityPivotCounter[1]
+
+var isMultiYearly = array.from("Biyearly", "Triyearly", "Quinquennially", "Decennially").includes(pivotAnchorInput)
+localPivotDrawConditionDeveloping = not isDailyBasedInput and time_close == time_close(pivotTimeframe) and not isMultiYearly 
+securityPivotDrawConditionDeveloping = false
+
+if (securityPivotDrawConditionStatic or localPivotDrawConditionStatic)
+    affixOldPivots(time)
+    drawNewPivots(time)
+
+// If possible, draw pivots from the beginning of the chart if none were found
+var FIRST_BAR_TIME = time
+if (barstate.islastconfirmedhistory and drawnGraphics.columns() == 0)
+
+    if not na(securityPivots) and securityPivotCounter > 0
+        if isDailyBasedInput
+            drawNewPivots(FIRST_BAR_TIME)
+        else 
+            runtime.error("Not enough intraday data to calculate Pivot Points. Lower the Pivots Timeframe or turn on the 'Use Daily-based Values' option in the indicator settings.")
+    else
+        runtime.error("Not enough data to calculate Pivot Points. Lower the Pivots Timeframe in the indicator settings.")

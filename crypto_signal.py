@@ -184,7 +184,7 @@ def calculate_full_pine_signals(df, timeframe):
         short_ma_period = 12
         long_ma_period = 60
         mfi_length = 16
-    else:  # 1d
+    elif timeframe == '1d':
         rsi_length = 21
         macd_fast = 13
         macd_slow = 26
@@ -192,6 +192,22 @@ def calculate_full_pine_signals(df, timeframe):
         short_ma_period = 20
         long_ma_period = 100
         mfi_length = 20
+    elif timeframe == '1w':
+        rsi_length = 28
+        macd_fast = 18
+        macd_slow = 36
+        macd_signal = 12
+        short_ma_period = 30
+        long_ma_period = 150
+        mfi_length = 25
+    else:  # Varsayılan 1h parametreleri
+        rsi_length = 14
+        macd_fast = 10
+        macd_slow = 20
+        macd_signal = 9
+        short_ma_period = 9
+        long_ma_period = 50
+        mfi_length = 14
 
     # EMA ve trend
     df['ema200'] = ta.trend.EMAIndicator(df['close'], window=EMA_200_PERIOD).ema_indicator()
@@ -661,102 +677,6 @@ async def main():
             stats["active_signals_count"] = len(active_signals)
             stats["tracked_coins_count"] = len(tracked_coins)
             
-            # Takip edilen coinlerin listesi
-            with open('tracked_coins.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "tracked_coins": list(tracked_coins),
-                    "count": len(tracked_coins),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
-            # Başarılı sinyaller dosyası
-            with open('successful_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "successful_signals": successful_signals,
-                    "count": len(successful_signals),
-                    "total_profit_usd": sum(signal.get("profit_usd", 0) for signal in successful_signals.values()),
-                    "total_profit_percent": sum(signal.get("profit_percent", 0) for signal in successful_signals.values()),
-                    "average_profit_per_signal": round(sum(signal.get("profit_usd", 0) for signal in successful_signals.values()) / max(len(successful_signals), 1), 2),
-                    "average_duration_hours": round(sum(signal.get("duration_hours", 0) for signal in successful_signals.values()) / max(len(successful_signals), 1), 2),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
-            # Başarısız sinyaller dosyası
-            with open('failed_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "failed_signals": failed_signals,
-                    "count": len(failed_signals),
-                    "total_loss_usd": sum(signal.get("loss_usd", 0) for signal in failed_signals.values()),
-                    "total_loss_percent": sum(signal.get("loss_percent", 0) for signal in failed_signals.values()),
-                    "average_loss_per_signal": round(sum(signal.get("loss_usd", 0) for signal in failed_signals.values()) / max(len(failed_signals), 1), 2),
-                    "average_duration_hours": round(sum(signal.get("duration_hours", 0) for signal in failed_signals.values()) / max(len(failed_signals), 1), 2),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
-            # Genel istatistikler dosyası
-            with open('general_stats.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "total_signals": stats["total_signals"],
-                    "successful_signals": stats["successful_signals"],
-                    "failed_signals": stats["failed_signals"],
-                    "total_profit_loss_usd": stats["total_profit_loss"],
-                    "success_rate_percent": round((stats["successful_signals"] / max(stats["total_signals"], 1)) * 100, 2),
-                    "average_profit_per_signal": round(stats["total_profit_loss"] / max(stats["total_signals"], 1), 2),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
-            # STOP OLAN COINLERİ TAKİP ET
-            for symbol, info in list(stopped_coins.items()):
-                try:
-                    df = await async_get_historical_data(symbol, '1h', 2)
-                    last_price = float(df['close'].iloc[-1])
-                    entry_price = float(info["entry_price"])
-                    if info["type"] == "ALIŞ":
-                        # Min fiyatı güncelle
-                        min_price = float(info["min_price"])
-                        if last_price < min_price:
-                            min_price = last_price
-                        info["min_price"] = format_price(min_price, entry_price)
-                        # Max terse gidiş (drawdown)
-                        drawdown = (min_price - entry_price) / entry_price * 100
-                        if drawdown < float(info.get("max_drawdown_percent", 0.0)):
-                            info["max_drawdown_percent"] = round(drawdown, 2)
-                        else:
-                            info["max_drawdown_percent"] = round(float(info.get("max_drawdown_percent", drawdown)), 2)
-                        # Hedefe ulaşıldı mı?
-                        if not info["reached_target"] and last_price >= float(info["target_price"]):
-                            info["reached_target"] = True
-                        # Sadece ALIŞ için min_price ve max_drawdown_percent kaydet
-                        info_to_save = {k: v for k, v in info.items() if k in ["symbol", "type", "entry_price", "stop_time", "target_price", "stop_loss", "signals", "min_price", "max_drawdown_percent", "reached_target"]}
-                        with open(f'stopped_{symbol}.json', 'w', encoding='utf-8') as f:
-                            json.dump(info_to_save, f, ensure_ascii=False, indent=2)
-                        if info["reached_target"]:
-                            del stopped_coins[symbol]
-                    elif info["type"] == "SATIŞ":
-                        # Max fiyatı güncelle
-                        max_price = float(info["max_price"])
-                        if last_price > max_price:
-                            max_price = last_price
-                        info["max_price"] = format_price(max_price, entry_price)
-                        # Max terse gidiş (drawup)
-                        drawup = (max_price - entry_price) / entry_price * 100
-                        if drawup > float(info.get("max_drawup_percent", 0.0)):
-                            info["max_drawup_percent"] = round(drawup, 2)
-                        else:
-                            info["max_drawup_percent"] = round(float(info.get("max_drawup_percent", drawup)), 2)
-                        # Hedefe ulaşıldı mı?
-                        if not info["reached_target"] and last_price <= float(info["target_price"]):
-                            info["reached_target"] = True
-                        # Sadece SATIŞ için max_price ve max_drawup_percent kaydet
-                        info_to_save = {k: v for k, v in info.items() if k in ["symbol", "type", "entry_price", "stop_time", "target_price", "stop_loss", "signals", "max_price", "max_drawup_percent", "reached_target"]}
-                        with open(f'stopped_{symbol}.json', 'w', encoding='utf-8') as f:
-                            json.dump(info_to_save, f, ensure_ascii=False, indent=2)
-                        if info["reached_target"]:
-                            del stopped_coins[symbol]
-                except Exception as e:
-                    print(f"Stop sonrası takip hatası: {symbol} - {str(e)}")
-                    continue
-            
             # İstatistik özeti yazdır
             print(f"📊 İSTATİSTİK ÖZETİ:")
             print(f"   Toplam Sinyal: {stats['total_signals']}")
@@ -781,14 +701,6 @@ async def main():
             # Döngü sonunda bekleme süresi
             print("Tüm coinler kontrol edildi. 30 saniye bekleniyor...")
             await asyncio.sleep(MAIN_LOOP_SLEEP)
-            
-            # Aktif sinyalleri dosyaya kaydet
-            with open('active_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "active_signals": active_signals,
-                    "count": len(active_signals),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
             
         except Exception as e:
             print(f"Genel hata: {e}")

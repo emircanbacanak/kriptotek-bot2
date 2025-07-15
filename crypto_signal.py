@@ -37,33 +37,78 @@ SIGNAL_LOOKBACK = 200  # Sinyal hesaplama için veri
 COOLDOWN_HOURS = 2
 MAIN_LOOP_SLEEP = 30  # Ana döngü bekleme süresi (saniye)
 
-# RSI parametreleri
+# === PineScript ile birebir parametreler ===
+# RSI periyotları
+RSI_PERIODS = {
+    '1w': 28,
+    '1d': 21,
+    '4h': 18,
+    'default': 14
+}
+# MACD parametreleri
+MACD_FAST = {
+    '1w': 18,
+    '1d': 13,
+    '4h': 11,
+    'default': 10
+}
+MACD_SLOW = {
+    '1w': 36,
+    '1d': 26,
+    '4h': 22,
+    'default': 20
+}
+MACD_SIGNAL = {
+    '1w': 12,
+    '1d': 10,
+    '4h': 8,
+    'default': 9
+}
+# EMA periyotları
+SHORT_MA_PERIOD = {
+    '1w': 30,
+    '1d': 20,
+    '4h': 12,
+    'default': 9
+}
+LONG_MA_PERIOD = {
+    '1w': 150,
+    '1d': 100,
+    '4h': 60,
+    'default': 50
+}
+# MFI periyotları
+MFI_LENGTH = {
+    '1w': 25,
+    '1d': 20,
+    '4h': 16,
+    'default': 14
+}
+# ATR periyotları
+ATR_PERIOD = {
+    '4h': 7,
+    'default': 10
+}
+# ATR multiplier
+ATR_MULTIPLIER = {
+    '1w': 2.0,
+    '1d': 1.2,
+    '4h': 1.3,
+    'default': 1.5
+}
+# RSI eşikleri
 RSI_OVERBOUGHT = 60
 RSI_OVERSOLD = 40
-
-# MFI parametreleri
+# MFI eşikleri
 MFI_BULLISH_THRESHOLD = 65
 MFI_BEARISH_THRESHOLD = 35
-
-# Hacim analizi
+# Hacim periyodu ve çarpanları
 VOLUME_MA_PERIOD = 20
 VOLUME_MULTIPLIER_HIGH_TF = 0.15
 VOLUME_MULTIPLIER_LOW_TF = 0.4
-
-# EMA parametreleri
+# EMA 200 periyodu
 EMA_200_PERIOD = 200
-
-# ATR parametreleri
-ATR_PERIOD_4H = 7
-ATR_PERIOD_DEFAULT = 10
-ATR_MULTIPLIER_4H = 1.3
-ATR_MULTIPLIER_1D = 1.2
-ATR_MULTIPLIER_1H = 1.5
-
-# Stablecoin çiftleri (hariç tutulacak)
-STABLECOIN_PAIRS = ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT', 'USDTUSDT']
-
-# ===== SABİTLER SONU =====
+# === PineScript ile birebir parametreler SONU ===
 
 # Binance client oluştur (globalde)
 client = Client()
@@ -157,75 +202,59 @@ async def async_get_historical_data(symbol, interval, lookback):
     df['volume'] = df['volume'].astype(float)
     return df
 
+def pine_mfi(df, window):
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    money_flow = typical_price * df['volume']
+    # Farklılıkları bul
+    price_diff = typical_price.diff()
+    # Pozitif ve negatif akışları bul
+    pos_flow = money_flow.where(price_diff > 0, 0)
+    neg_flow = money_flow.where(price_diff < 0, 0)
+    # Pine'daki gibi cumulative valuewhen mantığı
+    pos_cum = pos_flow.rolling(window=window, min_periods=1).sum()
+    neg_cum = neg_flow.rolling(window=window, min_periods=1).sum()
+    mfi = 100 - 100 / (1 + (pos_cum / neg_cum.replace(0, 1e-10)))
+    return mfi
+
 def calculate_full_pine_signals(df, timeframe):
     """
     Pine Script algo.pine mantığını eksiksiz şekilde Python'a taşır.
     df: pandas DataFrame (timestamp, open, high, low, close, volume)
-    timeframe: '1h', '4h', '1d' gibi string
+    timeframe: '1h', '2h', '4h', '1d', '1w' gibi string
     Dönüş: df (ekstra sütunlarla, en sonda 'signal')
     """
-    # Zaman dilimine göre parametreler
-    is_higher_tf = timeframe in ['1d', '4h']
-    is_4h = timeframe == '4h'
-    
-    # Parametreler sadece kullanılan timeframe'ler için
-    if timeframe == '1h':
-        rsi_length = 14
-        macd_fast = 10
-        macd_slow = 20
-        macd_signal = 9
-        short_ma_period = 9
-        long_ma_period = 50
-        mfi_length = 14
-    elif timeframe == '4h':
-        rsi_length = 18
-        macd_fast = 11
-        macd_slow = 22
-        macd_signal = 8
-        short_ma_period = 12
-        long_ma_period = 60
-        mfi_length = 16
-    elif timeframe == '1d':
-        rsi_length = 21
-        macd_fast = 13
-        macd_slow = 26
-        macd_signal = 10
-        short_ma_period = 20
-        long_ma_period = 100
-        mfi_length = 20
-    elif timeframe == '1w':
-        rsi_length = 28
-        macd_fast = 18
-        macd_slow = 36
-        macd_signal = 12
-        short_ma_period = 30
-        long_ma_period = 150
-        mfi_length = 25
-    else:  # Varsayılan 1h parametreleri
-        rsi_length = 14
-        macd_fast = 10
-        macd_slow = 20
-        macd_signal = 9
-        short_ma_period = 9
-        long_ma_period = 50
-        mfi_length = 14
-
+    # Zaman dilimine göre parametreler (PineScript ile birebir)
+    tf = timeframe
+    rsi_length = RSI_PERIODS.get(tf, RSI_PERIODS['default'])
+    macd_fast = MACD_FAST.get(tf, MACD_FAST['default'])
+    macd_slow = MACD_SLOW.get(tf, MACD_SLOW['default'])
+    macd_signal = MACD_SIGNAL.get(tf, MACD_SIGNAL['default'])
+    short_ma_period = SHORT_MA_PERIOD.get(tf, SHORT_MA_PERIOD['default'])
+    long_ma_period = LONG_MA_PERIOD.get(tf, LONG_MA_PERIOD['default'])
+    mfi_length = MFI_LENGTH.get(tf, MFI_LENGTH['default'])
+    atr_period = ATR_PERIOD.get(tf, ATR_PERIOD['default'])
+    # ATR multiplier PineScript ile birebir
+    if tf == '1w':
+        atr_multiplier_div = ATR_MULTIPLIER['1w']
+    elif tf == '1d':
+        atr_multiplier_div = ATR_MULTIPLIER['1d']
+    elif tf == '4h':
+        atr_multiplier_div = ATR_MULTIPLIER['4h']
+    else:
+        atr_multiplier_div = ATR_MULTIPLIER['default']
     # EMA ve trend
     df['ema200'] = ta.trend.EMAIndicator(df['close'], window=EMA_200_PERIOD).ema_indicator()
     df['trend_bullish'] = df['close'] > df['ema200']
     df['trend_bearish'] = df['close'] < df['ema200']
-
     # RSI
     df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=rsi_length).rsi()
     rsi_overbought = RSI_OVERBOUGHT
     rsi_oversold = RSI_OVERSOLD
-
     # MACD
     macd = ta.trend.MACD(df['close'], window_slow=macd_slow, window_fast=macd_fast, window_sign=macd_signal)
     df['macd'] = macd.macd()
     df['macd_signal'] = macd.macd_signal()
-
-    # Supertrend (özel fonksiyon)
+    # Supertrend (PineScript mantığı)
     def supertrend(df, atr_period, multiplier):
         hl2 = (df['high'] + df['low']) / 2
         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=atr_period).average_true_range()
@@ -240,71 +269,63 @@ def calculate_full_pine_signals(df, timeframe):
             else:
                 direction.append(direction[-1])
         return pd.Series(direction, index=df.index)
-
-    atr_period = ATR_PERIOD_4H if is_4h else ATR_PERIOD_DEFAULT
     atr_dynamic = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=atr_period).average_true_range().rolling(window=5).mean()
-    atr_multiplier = atr_dynamic / ATR_MULTIPLIER_4H if is_4h else atr_dynamic / ATR_MULTIPLIER_1D if timeframe == '1d' else atr_dynamic / ATR_MULTIPLIER_1H
+    atr_multiplier = atr_dynamic / atr_multiplier_div
     df['supertrend_dir'] = supertrend(df, atr_period, atr_multiplier.bfill())
-
     # Hareketli Ortalamalar
     df['short_ma'] = ta.trend.EMAIndicator(df['close'], window=short_ma_period).ema_indicator()
     df['long_ma'] = ta.trend.EMAIndicator(df['close'], window=long_ma_period).ema_indicator()
     df['ma_bullish'] = df['short_ma'] > df['long_ma']
     df['ma_bearish'] = df['short_ma'] < df['long_ma']
-
     # Hacim Analizi
-    volume_ma_period = VOLUME_MA_PERIOD
-    df['volume_ma'] = df['volume'].rolling(window=volume_ma_period).mean()
+    df['volume_ma'] = df['volume'].rolling(window=VOLUME_MA_PERIOD).mean()
+    is_higher_tf = tf in ['1d', '4h', '1w']
     df['enough_volume'] = df['volume'] > df['volume_ma'] * (VOLUME_MULTIPLIER_HIGH_TF if is_higher_tf else VOLUME_MULTIPLIER_LOW_TF)
-
-    # MFI
-    df['mfi'] = ta.volume.MFIIndicator(df['high'], df['low'], df['close'], df['volume'], window=mfi_length).money_flow_index()
+    # MFI (PineScript ile birebir)
+    df['mfi'] = pine_mfi(df, mfi_length)
     df['mfi_bullish'] = df['mfi'] < MFI_BULLISH_THRESHOLD
     df['mfi_bearish'] = df['mfi'] > MFI_BEARISH_THRESHOLD
-
-    # Fibonacci filtresi tamamen kaldırıldı, her zaman True
+    # Fibonacci filtresi (default kapalı)
     df['fib_in_range'] = True
-
-    # --- PineScript ile birebir AL/SAT sinyal mantığı ---
+    # --- PineScript ile birebir AL/SAT sinyal mantığı (değerleriyle birlikte, açıklamalı) ---
     def crossover(series1, series2):
         return (series1.shift(1) < series2.shift(1)) & (series1 > series2)
     def crossunder(series1, series2):
         return (series1.shift(1) > series2.shift(1)) & (series1 < series2)
-
+    # PineScript buySignal koşulu:
     buy_signal = (
-        crossover(df['macd'], df['macd_signal']) |
+        crossover(df['macd'], df['macd_signal'])
+        |
         (
-            (df['rsi'] < rsi_oversold) &
+            (df['rsi'] < rsi_oversold) &  # RSI < 40
             (df['supertrend_dir'] == 1) &
             (df['ma_bullish']) &
             (df['enough_volume']) &
-            (df['mfi_bullish']) &
+            (df['mfi_bullish']) &  # MFI < 65
             (df['trend_bullish'])
         )
     ) & df['fib_in_range']
-
+    # PineScript sellSignal koşulu:
     sell_signal = (
-        crossunder(df['macd'], df['macd_signal']) |
+        crossunder(df['macd'], df['macd_signal'])
+        |
         (
-            (df['rsi'] > rsi_overbought) &
+            (df['rsi'] > rsi_overbought) &  # RSI > 60
             (df['supertrend_dir'] == -1) &
             (df['ma_bearish']) &
             (df['enough_volume']) &
-            (df['mfi_bearish']) &
+            (df['mfi_bearish']) &  # MFI > 35
             (df['trend_bearish'])
         )
     ) & df['fib_in_range']
-
     df['signal'] = 0
     df.loc[buy_signal, 'signal'] = 1
     df.loc[sell_signal, 'signal'] = -1
-    
     if df['signal'].iloc[-1] == 0:
         if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
             df.at[df.index[-1], 'signal'] = 1
         else:
             df.at[df.index[-1], 'signal'] = -1
-
     return df
 
 # --- YENİ ANA DÖNGÜ VE MANTIK ---

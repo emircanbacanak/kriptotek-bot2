@@ -366,6 +366,7 @@ async def main():
     failed_signals = dict()  # {symbol: {...}} - Başarısız sinyaller (stop olan)
     tracked_coins = set()  # Takip edilen tüm coinlerin listesi
     first_run = True  # İlk çalıştırma kontrolü
+    pending_signals = dict()  # {(symbol, sinyal_tipi): {"signal_values": [...], "timestamp": datetime, "signals": {...}}}
     
     # Genel istatistikler
     stats = {
@@ -577,11 +578,9 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    
                     # GARANTİ SİNYAL KOŞULLARI - Sadece 4 zaman dilimi de aynıysa
                     buy_count = sum(1 for s in signal_values if s == 1)
                     sell_count = sum(1 for s in signal_values if s == -1)
-                    
                     # Sadece 4/4 aynı sinyal varsa devam et
                     if buy_count == 4:
                         sinyal_tipi = 'ALIS'
@@ -590,6 +589,9 @@ async def main():
                     else:
                         # 4/4 değilse sinyalleri güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
+                        # Bekleyen sinyal varsa iptal et
+                        pending_signals.pop((symbol, 'ALIS'), None)
+                        pending_signals.pop((symbol, 'SATIS'), None)
                         return
                     # 4 saatlik cooldown kontrolü
                     cooldown_key = (symbol, sinyal_tipi)
@@ -598,6 +600,8 @@ async def main():
                         if (datetime.now() - last_time) < timedelta(hours=COOLDOWN_HOURS):
                             # Cooldown süresi dolmadıysa sinyalleri güncelle ve devam et
                             previous_signals[symbol] = current_signals.copy()
+                            # Bekleyen sinyal varsa iptal et
+                            pending_signals.pop((symbol, sinyal_tipi), None)
                             return  # 2 saat dolmadıysa sinyal arama
                         else:
                             del cooldown_signals[cooldown_key]  # 2 saat dolduysa tekrar sinyal aranabilir
@@ -606,8 +610,41 @@ async def main():
                     if sent_signals.get(signal_key) == signal_values:
                         # Aynı sinyal daha önce gönderilmişse sinyalleri güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
+                        # Bekleyen sinyal varsa iptal et
+                        pending_signals.pop(signal_key, None)
                         return
-                    # Yeni sinyal gönder
+                    # --- 30 DK BEKLEME MEKANİZMASI ---
+                    # Eğer bekleyen sinyal yoksa ekle
+                    if signal_key not in pending_signals:
+                        pending_signals[signal_key] = {
+                            "signal_values": signal_values.copy(),
+                            "timestamp": datetime.now(),
+                            "signals": current_signals.copy()
+                        }
+                        print(f"{symbol} için {sinyal_tipi} beklemeye alındı. 30dk sonra tekrar kontrol edilecek.")
+                        previous_signals[symbol] = current_signals.copy()
+                        return
+                    else:
+                        # Bekleme süresi doldu mu kontrol et
+                        pending = pending_signals[signal_key]
+                        elapsed = (datetime.now() - pending["timestamp"]).total_seconds()
+                        if elapsed < 30 * 60:
+                            # 30dk dolmadıysa beklemeye devam
+                            previous_signals[symbol] = current_signals.copy()
+                            return
+                        # 30dk dolduysa, sinyal hala aynı mı kontrol et
+                        if pending["signal_values"] == signal_values:
+                            # Sinyal hala aynı, sinyal gönderilecek
+                            print(f"{symbol} için {sinyal_tipi} 30dk sonra doğrulandı, sinyal gönderilecek.")
+                            # Sinyal gönderme kodu aşağıda devam edecek
+                        else:
+                            # Sinyal değiştiyse bekleyen sinyali iptal et
+                            print(f"{symbol} için {sinyal_tipi} bekleyen sinyal iptal edildi (değişiklik oldu).")
+                            pending_signals.pop(signal_key, None)
+                            previous_signals[symbol] = current_signals.copy()
+                            return
+                    # --- 30dk sonunda sinyal hala aynıysa, aşağıdaki kod çalışacak ---
+                    # Sinyal gönder
                     sent_signals[signal_key] = signal_values.copy()
                     price = float(df['close'].iloc[-1])
                     message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals)
@@ -616,8 +653,8 @@ async def main():
                         print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
                         print(f"Değişiklik: {prev_signals} -> {current_signals}")
                         await send_telegram_message(message)
-                        # Kaldıraç hesaplama - Sadece 3/3 sinyal için 10x
-                        leverage = LEVERAGE  # 3/3 sinyal için sabit 10x kaldıraç
+                        # Kaldıraç hesaplama - Sadece 4/4 sinyal için 10x
+                        leverage = LEVERAGE  # 4/4 sinyal için sabit 10x kaldıraç
                         # Pozisyonu kaydet (tüm sayısal değerler float!)
                         positions[symbol] = {
                             "type": dominant_signal,
@@ -647,6 +684,8 @@ async def main():
                         # İstatistikleri güncelle
                         stats["total_signals"] += 1
                         stats["active_signals_count"] = len(active_signals)
+                        # Bekleyen sinyali kaldır
+                        pending_signals.pop(signal_key, None)
                     # Sinyalleri güncelle (her durumda)
                     previous_signals[symbol] = current_signals.copy()
                 await asyncio.sleep(0)  # Task'ler arası context switch için

@@ -21,6 +21,9 @@ urllib3.disable_warnings(InsecureRequestWarning)
 TELEGRAM_TOKEN = "8091816386:AAFl-t7GNyUsKJ7uX5wu9D-HzPLp30NYg_c"
 TELEGRAM_CHAT_ID = "847081095"
 
+# Stablecoin çiftleri (hariç tutulacak)
+STABLECOIN_PAIRS = ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT', 'USDTUSDT']
+
 # Trading parametreleri
 TARGET_PERCENT = 0.02  # %2 hedef
 STOP_LOSS_PERCENT = 0.01  # %1 stop loss

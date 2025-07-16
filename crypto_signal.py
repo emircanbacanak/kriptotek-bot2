@@ -154,35 +154,34 @@ def format_price(price, ref_price=None):
             return f"{price:.10f}".rstrip('0').rstrip('.')
 
 def create_signal_message(symbol, price, signals):
-    """Sinyal mesajını oluştur (AL/SAT başlıkta) - Sadece 4/4 sinyal için"""
+    """Sinyal mesajını oluştur (AL/SAT başlıkta) - Sadece 3/3 sinyal için"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
-    signal_30m = "ALIŞ" if signals['30m'] == 1 else "SATIŞ"
     signal_1h = "ALIŞ" if signals['1h'] == 1 else "SATIŞ"
-    signal_4h = "ALIŞ" if signals['4h'] == 1 else "SATIŞ"
+    signal_2h = "ALIŞ" if signals['2h'] == 1 else "SATIŞ"
     signal_1d = "ALIŞ" if signals['1d'] == 1 else "SATIŞ"
     buy_count = sum(1 for s in signals.values() if s == 1)
     sell_count = sum(1 for s in signals.values() if s == -1)
     
-    # Sadece 4/4 sinyal kontrolü
-    if buy_count == 4:
+    # Sadece 3/3 sinyal kontrolü
+    if buy_count == 3:
         dominant_signal = "ALIŞ"
         target_price = price * (1 + TARGET_PERCENT)  # %2 hedef
         stop_loss = price * (1 - STOP_LOSS_PERCENT)  # %1 stop
         sinyal_tipi = "AL SİNYALİ 🎯"
-        leverage = LEVERAGE  # 4/4 sinyal için 10x kaldıraç
-    elif sell_count == 4:
+        leverage = LEVERAGE  # 3/3 sinyal için 10x kaldıraç
+    elif sell_count == 3:
         dominant_signal = "SATIŞ"
         target_price = price * (1 - TARGET_PERCENT)  # %2 hedef
         stop_loss = price * (1 + STOP_LOSS_PERCENT)  # %1 stop
         sinyal_tipi = "SAT SİNYALİ 🎯"
-        leverage = LEVERAGE  # 4/4 sinyal için 10x kaldıraç
+        leverage = LEVERAGE  # 3/3 sinyal için 10x kaldıraç
     else:
         return None, None, None, None, None
     # Hedef ve stop fiyatlarını, fiyatın ondalık basamağı kadar formatla
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n30 Dakika: {signal_30m}\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n2 Saat: {signal_2h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -403,12 +402,11 @@ async def main():
     }
     
     timeframes = {
-        '30m': '30m',
         '1h': '1h',
-        '4h': '4h',
+        '2h': '2h',
         '1d': '1d'
     }
-    tf_names = ['30m', '1h', '4h', '1d']
+    tf_names = ['1h', '2h', '1d']
     
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
@@ -602,16 +600,16 @@ async def main():
                         return  # Değişiklik yoksa devam et
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    # GARANTİ SİNYAL KOŞULLARI - Sadece 4 zaman dilimi de aynıysa
+                    # GARANTİ SİNYAL KOŞULLARI - Sadece 3 zaman dilimi de aynıysa
                     buy_count = sum(1 for s in signal_values if s == 1)
                     sell_count = sum(1 for s in signal_values if s == -1)
-                    # Sadece 4/4 aynı sinyal varsa devam et
-                    if buy_count == 4:
+                    # Sadece 3/3 aynı sinyal varsa devam et
+                    if buy_count == 3:
                         sinyal_tipi = 'ALIS'
-                    elif sell_count == 4:
+                    elif sell_count == 3:
                         sinyal_tipi = 'SATIS'
                     else:
-                        # 4/4 değilse sinyalleri güncelle ve devam et
+                        # 3/3 değilse sinyalleri güncelle ve devam et
                         previous_signals[symbol] = current_signals.copy()
                         # Bekleyen sinyal varsa iptal et
                         pending_signals.pop((symbol, 'ALIS'), None)

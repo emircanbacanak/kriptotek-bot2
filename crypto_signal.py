@@ -156,8 +156,8 @@ def format_price(price, ref_price=None):
 def create_signal_message(symbol, price, signals):
     """Sinyal mesajını oluştur (AL/SAT başlıkta) - Sadece 4/4 sinyal için"""
     price_str = format_price(price, price)  # Fiyatın kendi basamağı kadar
+    signal_30m = "ALIŞ" if signals['30m'] == 1 else "SATIŞ"
     signal_1h = "ALIŞ" if signals['1h'] == 1 else "SATIŞ"
-    signal_2h = "ALIŞ" if signals['2h'] == 1 else "SATIŞ"
     signal_4h = "ALIŞ" if signals['4h'] == 1 else "SATIŞ"
     signal_1d = "ALIŞ" if signals['1d'] == 1 else "SATIŞ"
     buy_count = sum(1 for s in signals.values() if s == 1)
@@ -182,7 +182,7 @@ def create_signal_message(symbol, price, signals):
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n2 Saat: {signal_2h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n30 Dakika: {signal_30m}\n1 Saat: {signal_1h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -403,12 +403,12 @@ async def main():
     }
     
     timeframes = {
+        '30m': '30m',
         '1h': '1h',
-        '2h': '2h',
         '4h': '4h',
         '1d': '1d'
     }
-    tf_names = ['1h', '2h', '4h', '1d']
+    tf_names = ['30m', '1h', '4h', '1d']
     
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")

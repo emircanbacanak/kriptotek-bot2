@@ -31,7 +31,7 @@ LEVERAGE = 10  # Kaldıraç
 INVESTMENT_AMOUNT = 100  # Yatırım miktarı ($)
 
 # Hacim ve veri parametreleri
-MIN_VOLUME = 55000000  # Minimum hacim
+MIN_VOLUME = 15000000  # Minimum hacim
 MIN_DATA_POINTS = 30  # Minimum veri noktası
 DATA_LOOKBACK = 40  # Veri geriye bakış
 SIGNAL_LOOKBACK = 200  # Sinyal hesaplama için veri

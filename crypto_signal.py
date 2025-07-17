@@ -467,10 +467,11 @@ async def main_loop():
 
     timeframes = {
         '1h': '1h',
+        '2h': '2h',
         '4h': '4h',
         '1d': '1d'
     }
-    tf_names = ['1h', '4h', '1d']
+    tf_names = ['1h', '2h', '4h', '1d']
 
     print("Sinyal botu başlatıldı!")
     print("İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
@@ -875,13 +876,13 @@ async def main_loop():
                     # Değişiklik varsa, yeni sinyal analizi yap
                     signal_values = [current_signals[tf] for tf in tf_names]
 
-                    # 1 saatlik sinyal diğerlerinden farklı mı kontrol et
-                    tf_1h_diff = (signal_values[0] != signal_values[1] and signal_values[0] != signal_values[2])
+                    # 1h farklı mı kontrolü artık 4 zaman dilimiyle yapılacak
+                    tf_1h_diff = (signal_values[0] != signal_values[1] and signal_values[0] != signal_values[2] and signal_values[0] != signal_values[3])
 
                     print(f"   Sinyal değerleri: {signal_values}")
                     print(f"   1h farklı mı: {tf_1h_diff}")
 
-                    # Sinyal koşullarını kontrol et
+                    # Sinyal koşullarını kontrol et (4 zaman dilimi)
                     if all(s == 1 for s in signal_values):
                         sinyal_tipi = 'ALIS'
                         wait_for_better_entry = False
@@ -891,13 +892,11 @@ async def main_loop():
                         wait_for_better_entry = False
                         print(f"   ✅ Tüm zaman dilimleri SATIŞ - Anında işlem")
                     elif (
-                        (signal_values[0] == signal_values[1] != 0) or
-                        (signal_values[1] == signal_values[2] != 0) or
-                        (signal_values[0] == signal_values[2] != 0)
+                        signal_values.count(1) >= 3 or signal_values.count(-1) >= 3
                     ):
-                        sinyal_tipi = 'ALIS' if signal_values.count(1) >= 2 else 'SATIS'
+                        sinyal_tipi = 'ALIS' if signal_values.count(1) >= 3 else 'SATIS'
                         wait_for_better_entry = False
-                        print(f"   ✅ 2 zaman dilimi aynı - Anında işlem: {sinyal_tipi}")
+                        print(f"   ✅ 3 zaman dilimi aynı - Anında işlem: {sinyal_tipi}")
                     else:
                         # Sinyal koşulu sağlanmıyorsa sadece güncelle ve devam et
                         print(f"   ❌ Sinyal koşulu sağlanmıyor - İşlem yok")
@@ -905,30 +904,30 @@ async def main_loop():
                         return
 
                     # Bekleme mantığı sadece belirli durumlarda çalışacak
-                    # SATIŞ-ALIŞ-ALIŞ (1h farklı) → %1 düşüş bekle VEYA 1h tekrar ALIŞ olması
-                    # ALIŞ-SATIŞ-SATIŞ (1h farklı) → %1 yükseliş bekle VEYA 1h tekrar SATIŞ olması
+                    # SATIŞ-ALIŞ-ALIŞ-ALIŞ (1h farklı) → %1 düşüş bekle VEYA 1h tekrar ALIŞ olması
+                    # ALIŞ-SATIŞ-SATIŞ-SATIŞ (1h farklı) → %1 yükseliş bekle VEYA 1h tekrar SATIŞ olması
                     # Diğer durumlar → Anında işlem
                     if tf_1h_diff:
-                        if signal_values[0] == -1 and signal_values[1] == 1 and signal_values[2] == 1:
-                            # SATIŞ-ALIŞ-ALIŞ → %1 düşüş bekle VEYA 1h tekrar ALIŞ olması
+                        if signal_values[0] == -1 and signal_values[1] == 1 and signal_values[2] == 1 and signal_values[3] == 1:
+                            # SATIŞ-ALIŞ-ALIŞ-ALIŞ → %1 düşüş bekle VEYA 1h tekrar ALIŞ olması
                             wait_for_better_entry = True
-                            entry_strategy = "SATIŞ-ALIŞ-ALIŞ: Fiyatın %1 düşmesini bekleyip alım yapılacak VEYA 1h tekrar ALIŞ olması"
-                            print(f"   ⏳ BEKLEME: SATIŞ-ALIŞ-ALIŞ")
-                        elif signal_values[0] == 1 and signal_values[1] == -1 and signal_values[2] == -1:
-                            # ALIŞ-SATIŞ-SATIŞ → %1 yükseliş bekle VEYA 1h tekrar SATIŞ olması
+                            entry_strategy = "SATIŞ-ALIŞ-ALIŞ-ALIŞ: Fiyatın %1 düşmesini bekleyip alım yapılacak VEYA 1h tekrar ALIŞ olması"
+                            print(f"   ⏳ BEKLEME: SATIŞ-ALIŞ-ALIŞ-ALIŞ")
+                        elif signal_values[0] == 1 and signal_values[1] == -1 and signal_values[2] == -1 and signal_values[3] == -1:
+                            # ALIŞ-SATIŞ-SATIŞ-SATIŞ → %1 yükseliş bekle VEYA 1h tekrar SATIŞ olması
                             wait_for_better_entry = True
-                            entry_strategy = "ALIŞ-SATIŞ-SATIŞ: Fiyatın %1 yükselmesini bekleyip satım yapılacak VEYA 1h tekrar SATIŞ olması"
-                            print(f"   ⏳ BEKLEME: ALIŞ-SATIŞ-SATIŞ")
+                            entry_strategy = "ALIŞ-SATIŞ-SATIŞ-SATIŞ: Fiyatın %1 yükselmesini bekleyip satım yapılacak VEYA 1h tekrar SATIŞ olması"
+                            print(f"   ⏳ BEKLEME: ALIŞ-SATIŞ-SATIŞ-SATIŞ")
                         else:
                             # Diğer farklı durumlar → Anında işlem
                             wait_for_better_entry = False
                             entry_strategy = "Anında işlem (1h farklı ama özel durum değil)"
                             print(f"   ⚡ ANINDA İŞLEM: 1h farklı ama özel durum değil - {signal_values}")
                     else:
-                        # Tüm zaman dilimleri aynı → Anında işlem
+                        # Tüm zaman dilimleri aynı veya 3'ü aynı → Anında işlem
                         wait_for_better_entry = False
-                        entry_strategy = "Anında işlem (tüm zaman dilimleri aynı)"
-                        print(f"   ⚡ ANINDA İŞLEM: Tüm zaman dilimleri aynı - {signal_values}")
+                        entry_strategy = "Anında işlem (tüm zaman dilimleri aynı veya 3'ü aynı)"
+                        print(f"   ⚡ ANINDA İŞLEM: Tüm zaman dilimleri aynı veya 3'ü aynı - {signal_values}")
 
                     # 4 saatlik cooldown kontrolü
                     cooldown_key = (symbol, sinyal_tipi)

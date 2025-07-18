@@ -23,7 +23,7 @@ import aiohttp
 urllib3.disable_warnings(InsecureRequestWarning)
 
 # Telegram Bot ayarları
-TELEGRAM_TOKEN = "7872345042:AAE6Om2LGtz1QjqfZz8ge0em6Gw29llzFno"
+TELEGRAM_TOKEN = "8091816386:AAFl-t7GNyUsKJ7uX5wu9D-HzPLp30NYg_c"
 TELEGRAM_CHAT_ID = "847081095"
 
 # Binance client oluştur (globalde)

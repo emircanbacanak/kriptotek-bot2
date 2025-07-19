@@ -322,7 +322,7 @@ async def get_active_high_volume_usdt_pairs(min_volume=65000000):
                 continue
     # Hacme göre sırala ve ilk 20'yi al
     high_volume_pairs.sort(key=lambda x: x[1], reverse=True)
-    high_volume_pairs = high_volume_pairs[:20]
+    high_volume_pairs = high_volume_pairs[:40]
     # 1d verisi 30'dan az olanları atla, uygun tüm coinleri döndür
     uygun_pairs = []
     for symbol, volume in high_volume_pairs:
@@ -565,32 +565,8 @@ async def main():
                     signal_values = [current_signals[tf] for tf in tf_names]
                     # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
                     if all(s == 1 for s in signal_values):
-                        # AL sinyali için: son mumun yeşil kapanış olması gerekir
-                        try:
-                            df_last = await async_get_historical_data(symbol, timeframes['1h'], 2)
-                            last_open = float(df_last['open'].iloc[-1])
-                            last_close = float(df_last['close'].iloc[-1])
-                            if last_close <= last_open:
-                                previous_signals[symbol] = current_signals.copy()
-                                return  # Mum yeşil değilse AL sinyali verme
-                        except Exception as e:
-                            print(f"Mum rengi kontrol hatası (ALIŞ): {symbol} - {str(e)}")
-                            previous_signals[symbol] = current_signals.copy()
-                            return
                         sinyal_tipi = 'ALIS'
                     elif all(s == -1 for s in signal_values):
-                        # SAT sinyali için: son mumun kırmızı kapanış olması gerekir
-                        try:
-                            df_last = await async_get_historical_data(symbol, timeframes['1h'], 2)
-                            last_open = float(df_last['open'].iloc[-1])
-                            last_close = float(df_last['close'].iloc[-1])
-                            if last_close >= last_open:
-                                previous_signals[symbol] = current_signals.copy()
-                                return  # Mum kırmızı değilse SAT sinyali verme
-                        except Exception as e:
-                            print(f"Mum rengi kontrol hatası (SATIŞ): {symbol} - {str(e)}")
-                            previous_signals[symbol] = current_signals.copy()
-                            return
                         sinyal_tipi = 'SATIS'
                     else:
                         previous_signals[symbol] = current_signals.copy()

@@ -23,7 +23,7 @@ import aiohttp
 urllib3.disable_warnings(InsecureRequestWarning)
 
 # Telegram Bot ayarları
-TELEGRAM_TOKEN = "8091816386:AAFl-t7GNyUsKJ7uX5wu9D-HzPLp30NYg_c"
+TELEGRAM_TOKEN = "7872345042:AAE6Om2LGtz1QjqfZz8ge0em6Gw29llzFno"
 TELEGRAM_CHAT_ID = "847081095"
 
 # Binance client oluştur (globalde)
@@ -80,43 +80,20 @@ def create_signal_message(symbol, price, signals):
         target_price = price * 1.02  # %2 hedef
         stop_loss = price * 0.99     # %1 stop
         sinyal_tipi = "AL SİNYALİ"
-        leverage = 10 if buy_count == 4 else 5
+        leverage = 10 if buy_count == 3 else 5
     elif sell_count >= 2:
         dominant_signal = "SATIŞ"
         target_price = price * 0.98  # %2 hedef
         stop_loss = price * 1.01     # %1 stop
         sinyal_tipi = "SAT SİNYALİ"
-        leverage = 10 if sell_count == 4 else 5
+        leverage = 10 if sell_count == 3 else 5
     else:
         return None, None, None, None, None
+    # Hedef ve stop fiyatlarını, fiyatın ondalık basamağı kadar formatla
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
-
     message = f"""
-🚨 <b>{sinyal_tipi}</b>
-
-<b>Kripto Çifti:</b> {symbol}
-<b>Fiyat:</b> {price_str}
-
-<b>⏰ Zaman Dilimleri:</b>
-<b>1 Saat (1h):</b> {signal_1h}
-<b>2 Saat (2h):</b> {signal_2h}
-<b>4 Saat (4h):</b> {signal_4h}
-<b>1 Gün (1d):</b> {signal_1d}
-
-<b>Kaldıraç Önerisi:</b> 5x - 10x
-
-💰 <b>Hedef Fiyat:</b> {target_price_str}
-🛑 <b>Stop Loss:</b> {stop_loss_str}
-
-⚠️ <b>YATIRIM TAVSİYESİ DEĞİLDİR</b> ⚠️
-
-📋 <b>DİKKAT:</b>
-• Portföyünüzün max %5-10'unu kullanın
-• Stop loss'u mutlaka uygulayın
-• FOMO ile acele karar vermeyin
-• Hedef fiyata ulaşınca kar alın
-"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n2 Saat: {signal_2h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: 5x - 10x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -320,9 +297,8 @@ async def get_active_high_volume_usdt_pairs(min_volume=65000000):
                     high_volume_pairs.append((symbol, quote_volume))
             except Exception:
                 continue
-    # Hacme göre sırala ve ilk 20'yi al
+    # Hacme göre sırala
     high_volume_pairs.sort(key=lambda x: x[1], reverse=True)
-    high_volume_pairs = high_volume_pairs[:40]
     # 1d verisi 30'dan az olanları atla, uygun tüm coinleri döndür
     uygun_pairs = []
     for symbol, volume in high_volume_pairs:
@@ -342,7 +318,6 @@ async def main():
     positions = dict()  # {symbol: position_info}
     cooldown_signals = dict()  # {(symbol, sinyal_tipi): datetime}
     stop_cooldown = dict()  # {symbol: datetime}
-    completed_cooldown = dict()  # {symbol: datetime}  # Başarılı veya stop olanlar için cooldown
     previous_signals = dict()  # {symbol: {tf: signal}} - İlk çalıştığında kaydedilen sinyaller
     stopped_coins = dict()  # {symbol: {...}}
     active_signals = dict()  # {symbol: {...}} - Aktif sinyaller
@@ -395,7 +370,6 @@ async def main():
                             msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                             await send_telegram_message(msg)
                             cooldown_signals[(symbol, "ALIS")] = datetime.now()
-                            completed_cooldown[symbol] = datetime.now()  # 4 saatlik cooldown başlat
                             
                             # Başarılı sinyal olarak kaydet
                             profit_percent = 2
@@ -430,7 +404,6 @@ async def main():
                             await send_telegram_message(msg)
                             cooldown_signals[(symbol, "ALIS")] = datetime.now()
                             stop_cooldown[symbol] = datetime.now()
-                            completed_cooldown[symbol] = datetime.now()  # 4 saatlik cooldown başlat
                             
                             # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
                             stopped_coins[symbol] = {
@@ -479,7 +452,6 @@ async def main():
                             msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                             await send_telegram_message(msg)
                             cooldown_signals[(symbol, "SATIS")] = datetime.now()
-                            completed_cooldown[symbol] = datetime.now()  # 4 saatlik cooldown başlat
                             
                             # Başarılı sinyal olarak kaydet
                             profit_percent = 2
@@ -518,13 +490,13 @@ async def main():
                 # Eğer pozisyon açıksa, yeni sinyal arama
                 if symbol in positions:
                     return
-                # Eğer coin 4 saatlik cooldown'daysa sinyal arama
-                if symbol in completed_cooldown:
-                    last_time = completed_cooldown[symbol]
-                    if (datetime.now() - last_time) < timedelta(hours=4):
-                        return  # 4 saat dolmadıysa sinyal arama
+                # Stop sonrası 4 saatlik cooldown kontrolü
+                if symbol in stop_cooldown:
+                    last_stop = stop_cooldown[symbol]
+                    if (datetime.now() - last_stop) < timedelta(hours=2):
+                        return  # 2 saat dolmadıysa sinyal arama
                     else:
-                        del completed_cooldown[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
+                        del stop_cooldown[symbol]  # 2 saat dolduysa tekrar sinyal aranabilir
                 # 1 günlük veri kontrolü
                 try:
                     df_1d = await async_get_historical_data(symbol, timeframes['1d'], 40)

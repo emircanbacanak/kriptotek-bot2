@@ -23,7 +23,7 @@ import aiohttp
 urllib3.disable_warnings(InsecureRequestWarning)
 
 # Telegram Bot ayarları
-TELEGRAM_TOKEN = "7872345042:AAE6Om2LGtz1QjqfZz8ge0em6Gw29llzFno"
+TELEGRAM_TOKEN = "8091816386:AAFl-t7GNyUsKJ7uX5wu9D-HzPLp30NYg_c"
 TELEGRAM_CHAT_ID = "847081095"
 
 # Binance client oluştur (globalde)
@@ -325,6 +325,7 @@ async def main():
     failed_signals = dict()  # {symbol: {...}} - Başarısız sinyaller (stop olan)
     tracked_coins = set()  # Takip edilen tüm coinlerin listesi
     first_run = True  # İlk çalıştırma kontrolü
+    waiting_signals = dict()  # {symbol: {type: "ALIŞ"/"SATIŞ", signal_price: float, signals: {tf: "ALIŞ"/"SATIŞ"}, leverage: int, wait_start_time: str, entry_strategy: str}} - Bekleyen sinyaller
     
     # Genel istatistikler
     stats = {
@@ -525,21 +526,50 @@ async def main():
                 if symbol in previous_signals:
                     prev_signals = previous_signals[symbol]
                     signal_changed = False
-                    # Herhangi bir zaman diliminde değişiklik var mı kontrol et
                     for tf in tf_names:
                         if prev_signals[tf] != current_signals[tf]:
                             signal_changed = True
                             print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
                             break
                     if not signal_changed:
-                        return  # Değişiklik yoksa devam et
-                    # Değişiklik varsa, yeni sinyal analizi yap
+                        return
                     signal_values = [current_signals[tf] for tf in tf_names]
-                    # Sinyal koşulu: sadece 4 zaman dilimi de aynıysa
+                    prev_signal_values = [prev_signals[tf] for tf in tf_names]
+
+                    # 1h farklıdan hepsi aynıya geçişte bekleyen sinyal oluştur
+                    if (
+                        (prev_signal_values[0] != prev_signal_values[1] or prev_signal_values[0] != prev_signal_values[2] or prev_signal_values[0] != prev_signal_values[3])
+                        and (all(s == 1 for s in signal_values) or all(s == -1 for s in signal_values))
+                    ):
+                        # Bekleyen sinyal kaydet
+                        wait_type = 'ALIŞ' if all(s == 1 for s in signal_values) else 'SATIŞ'
+                        price = float(await async_get_historical_data(symbol, timeframes['1h'], 2))
+                        price = price['close'].iloc[-1]
+                        waiting_signals[symbol] = {
+                            "type": wait_type,
+                            "signal_price": price,
+                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
+                            "leverage": 10 if all(s == 1 or s == -1 for s in signal_values) else 5,
+                            "wait_start_time": str(datetime.now()),
+                            "entry_strategy": "1h farklıdan hepsi aynıya geçti, fiyat %1 değişimi veya 1h tekrar aynı sinyal bekleniyor"
+                        }
+                        print(f"   ⏳ BEKLEYEN SİNYAL: {symbol} - 1h farklıdan hepsi aynıya geçti, fiyat %1 değişimi veya 1h tekrar aynı sinyal bekleniyor")
+                        previous_signals[symbol] = current_signals.copy()
+                        return
+
+                    # Sadece 4 zaman dilimi de aynıysa ve önceki durumda da aynıysa, tekrar sinyal üretme
                     if all(s == 1 for s in signal_values):
-                        sinyal_tipi = 'ALIS'
+                        if not (all(s == 1 for s in prev_signal_values)):
+                            sinyal_tipi = 'ALIS'
+                        else:
+                            previous_signals[symbol] = current_signals.copy()
+                            return
                     elif all(s == -1 for s in signal_values):
-                        sinyal_tipi = 'SATIS'
+                        if not (all(s == -1 for s in prev_signal_values)):
+                            sinyal_tipi = 'SATIS'
+                        else:
+                            previous_signals[symbol] = current_signals.copy()
+                            return
                     else:
                         previous_signals[symbol] = current_signals.copy()
                         return
@@ -727,6 +757,77 @@ async def main():
                             del stopped_coins[symbol]
                 except Exception as e:
                     print(f"Stop sonrası takip hatası: {symbol} - {str(e)}")
+                    continue
+            
+            # Bekleyen sinyalleri kontrol et ve sinyal üret
+            for symbol, wait_info in list(waiting_signals.items()):
+                if (datetime.now() - datetime.fromisoformat(wait_info["wait_start_time"])) > timedelta(hours=2):
+                    print(f"   ⏳ BEKLEYEN SİNYAL SÜRESİ GEÇTİ: {symbol} - {wait_info['entry_strategy']}")
+                    del waiting_signals[symbol]
+                    continue
+
+                try:
+                    df = await async_get_historical_data(symbol, '1h', 2)
+                    last_price = float(df['close'].iloc[-1])
+
+                    # Fiyat %1 değişti mi?
+                    if abs(last_price - wait_info["signal_price"]) / wait_info["signal_price"] * 100 > 1:
+                        print(f"   ⏳ BEKLEYEN SİNYAL BAŞARIYLA GERÇEKLEŞTİ: {symbol} - Fiyat %1 değişti.")
+                        # Bekleyen sinyal bilgisini kullan
+                        sinyal_tipi = wait_info["type"]
+                        price = wait_info["signal_price"]
+                        message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, wait_info["signals"])
+                        if message:
+                            message = message.replace('Kaldıraç Önerisi: 10x', 'Kaldıraç Önerisi: 5x - 10x')
+                            print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
+                            print(f"Değişiklik: {wait_info['signals']} -> {wait_info['signals']}") # Bekleyen sinyal değişmedi
+                            await send_telegram_message(message)
+                            # Kaldıraç hesaplama
+                            buy_count = sum(1 for s in wait_info["signals"].values() if s == 1)
+                            sell_count = sum(1 for s in wait_info["signals"].values() if s == -1)
+                            leverage = 10 if (buy_count == 3 or sell_count == 3) else 5
+                            # Pozisyonu kaydet (tüm sayısal değerler float!)
+                            positions[symbol] = {
+                                "type": dominant_signal,
+                                "target": float(target_price),
+                                "stop": float(stop_loss),
+                                "open_price": float(price),
+                                "stop_str": stop_loss_str,
+                                "signals": wait_info["signals"],
+                                "leverage": leverage,
+                                "entry_time": str(datetime.now())
+                            }
+                            # Aktif sinyal olarak kaydet
+                            active_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": dominant_signal,
+                                "entry_price": format_price(price, price),
+                                "entry_price_float": price,
+                                "target_price": format_price(target_price, price),
+                                "stop_loss": format_price(stop_loss, price),
+                                "signals": wait_info["signals"],
+                                "leverage": leverage,
+                                "signal_time": str(datetime.now()),
+                                "current_price": format_price(price, price),
+                                "current_price_float": price,
+                                "last_update": str(datetime.now())
+                            }
+                            # İstatistikleri güncelle
+                            stats["total_signals"] += 1
+                            stats["active_signals_count"] = len(active_signals)
+                            del waiting_signals[symbol]
+                        else:
+                            print(f"   ⏳ BEKLEYEN SİNYAL BAŞARISIZ: {symbol} - Sinyal mesajı oluşturulamadı.")
+                            del waiting_signals[symbol]
+                    # 1h tekrar aynı sinyale döndü mü?
+                    elif (
+                        (wait_info["signals"]["1h"] == 1 and wait_info["signals"]["2h"] == 1 and wait_info["signals"]["4h"] == 1) or
+                        (wait_info["signals"]["1h"] == -1 and wait_info["signals"]["2h"] == -1 and wait_info["signals"]["4h"] == -1)
+                    ):
+                        print(f"   ⏳ BEKLEYEN SİNYAL BAŞARISIZ: {symbol} - 1h tekrar aynı sinyale döndü.")
+                        del waiting_signals[symbol]
+                except Exception as e:
+                    print(f"Bekleyen sinyal kontrol hatası: {symbol} - {str(e)}")
                     continue
             
             # İstatistik özeti yazdır

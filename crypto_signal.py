@@ -113,17 +113,22 @@ def create_signal_message(symbol, price, signals):
     
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
-    message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\n
-    Fiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n
-    \nKaldıraç Önerisi: {leverage}x\n
-    \n💰 Hedef Fiyat: {target_price_str}\n
-    🛑 Stop Loss: {stop_loss_str}\n
-    \n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n
-    \n📋 DİKKAT:\n
-    • Stop kullanın\n
-    • Acele karar vermeyin\n
-    • Kendi araştırmanızı yapın\n"""
+    message = f"""🚨 {sinyal_tipi} 🚨
+
+    🔹 Kripto Çifti: {symbol}  
+    💵 Fiyat: {price_str}
+
+    📈 Hedef Fiyat: {target_price_str}  
+    🛑 Stop Loss: {stop_loss_str}  
+    📊 Kaldıraç Önerisi: {leverage}x
+
+    ⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️
+
+    📋 Dikkat Edilmesi Gerekenler:  
+    • Stop loss kullanmayı unutmayın  
+    • Acele karar vermeyin  
+    • Kendi araştırmanızı yapın"""
+
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):

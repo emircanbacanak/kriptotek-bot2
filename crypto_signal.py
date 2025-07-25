@@ -20,6 +20,16 @@ import json
 import aiohttp
 import tqdm
 
+# TR saat dilimi için zaman alma fonksiyonu
+try:
+    from zoneinfo import ZoneInfo
+    def get_tr_time():
+        return datetime.now(ZoneInfo("Europe/Istanbul"))
+except ImportError:
+    import pytz
+    def get_tr_time():
+        return datetime.now(pytz.timezone("Europe/Istanbul"))
+
 # SSL uyarılarını kapat
 urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -39,7 +49,7 @@ async def send_telegram_message(message):
 
 def is_signal_search_allowed():
     """Sinyal aramaya izin verilen saatleri kontrol eder"""
-    now = datetime.now()
+    now = get_tr_time()
     current_hour = now.hour
     # Yasaklı saat aralıkları: 01:00-08:00 ve 13:00-17:00
     if (1 <= current_hour < 8) or (13 <= current_hour < 17):

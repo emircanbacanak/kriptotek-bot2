@@ -7,3 +7,4 @@ numpy==1.26.2
 ta==0.10.2
 certifi
 tqdm
+pytz

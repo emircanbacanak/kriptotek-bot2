@@ -138,28 +138,44 @@ async def async_get_historical_data(symbol, interval, lookback):
 
 def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     """
-    Pine Script algo.pine mantığını eksiksiz şekilde Python'a taşır.
-    df: pandas DataFrame (timestamp, open, high, low, close, volume)
-    timeframe: '1h', '2h', '4h', '1d' gibi string
-    fib_filter_enabled: Fibonacci filtresi aktif mi?
-    Dönüş: df (ekstra sütunlarla, en sonda 'signal')
+    Pine Script'e birebir uyumlu AL/SAT sinyal hesaplaması.
+    Zaman dilimine göre özel parametreler içerir.
     """
-    # Zaman dilimine göre parametreler
-    is_higher_tf = timeframe in ['4h', '1d']
-    is_1d = timeframe == '1d'
-    is_4h = timeframe == '4h'
-    is_2h = timeframe == '2h' 
-    is_1h = timeframe == '1h'
-    rsi_length = 18 if is_1d else 16 if is_4h else 14 if is_1h or is_2h else 12
-    macd_fast = 11 if is_1d else 10 if is_4h else 9 if is_1h or is_2h else 8
-    macd_slow = 22 if is_1d else 20 if is_4h else 18 if is_1h or is_2h else 16
-    macd_signal = 8 if is_1d else 9 if is_4h else 8 if is_1h or is_2h else 7
-    short_ma_period = 12 if is_1d else 10 if is_4h else 9 if is_1h or is_2h else 8
-    long_ma_period = 60 if is_1d else 50 if is_4h else 40 if is_1h or is_2h else 30
-    mfi_length = 16 if is_1d else 14 if is_4h else 12 if is_1h or is_2h else 10
-    fib_lookback = 70 if is_1d else 50 if is_4h else 40 if is_1h or is_2h else 30
+    # --- Zaman dilimine göre sabit parametreler ---
+    if timeframe in ['1h', '2h']:
+        rsi_length = 14
+        macd_fast = 10
+        macd_slow = 20
+        macd_signal = 9
+        short_ma_period = 9
+        long_ma_period = 50
+        mfi_length = 14
+        fib_lookback = 50
+    elif timeframe == '4h':
+        rsi_length = 18
+        macd_fast = 11
+        macd_slow = 22
+        macd_signal = 8
+        short_ma_period = 12
+        long_ma_period = 60
+        mfi_length = 16
+        fib_lookback = 70
+    elif timeframe == '1d':
+        rsi_length = 21
+        macd_fast = 13
+        macd_slow = 26
+        macd_signal = 10
+        short_ma_period = 20
+        long_ma_period = 100
+        mfi_length = 20
+        fib_lookback = 100
+    else:
+        raise ValueError(f"Desteklenmeyen zaman dilimi: {timeframe}")
 
-    # EMA ve trend
+    atr_period = 10
+    atr_multiplier = 3
+
+    # EMA 200 ve trend
     df['ema200'] = ta.trend.EMAIndicator(df['close'], window=200).ema_indicator()
     df['trend_bullish'] = df['close'] > df['ema200']
     df['trend_bearish'] = df['close'] < df['ema200']
@@ -174,7 +190,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     df['macd'] = macd.macd()
     df['macd_signal'] = macd.macd_signal()
 
-    # Supertrend (özel fonksiyon)
+    # Supertrend sabit değerlerle
     def supertrend(df, atr_period, multiplier):
         hl2 = (df['high'] + df['low']) / 2
         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=atr_period).average_true_range()
@@ -190,28 +206,23 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
                 direction.append(direction[-1])
         return pd.Series(direction, index=df.index)
 
-    atr_period = 7 if is_1d else 10
-    atr_dynamic = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=atr_period).average_true_range().rolling(window=5).mean()
-    atr_multiplier = atr_dynamic / 2 if is_1d else atr_dynamic / 1.2 if is_4h else atr_dynamic / 1.3 if is_1h or is_2h else atr_dynamic / 1.4
-    df['supertrend_dir'] = supertrend(df, atr_period, atr_multiplier.bfill())
+    df['supertrend_dir'] = supertrend(df, atr_period, atr_multiplier)
 
-    # Hareketli Ortalamalar
+    # MA'ler
     df['short_ma'] = ta.trend.EMAIndicator(df['close'], window=short_ma_period).ema_indicator()
     df['long_ma'] = ta.trend.EMAIndicator(df['close'], window=long_ma_period).ema_indicator()
     df['ma_bullish'] = df['short_ma'] > df['long_ma']
     df['ma_bearish'] = df['short_ma'] < df['long_ma']
 
-    # Hacim Analizi
-    volume_ma_period = 20
-    df['volume_ma'] = df['volume'].rolling(window=volume_ma_period).mean()
-    df['enough_volume'] = df['volume'] > df['volume_ma'] * (0.15 if is_higher_tf else 0.4)
+    # Hacim & MFI
+    df['volume_ma'] = df['volume'].rolling(window=20).mean()
+    df['enough_volume'] = df['volume'] > df['volume_ma'] * 0.4
 
-    # MFI
     df['mfi'] = ta.volume.MFIIndicator(df['high'], df['low'], df['close'], df['volume'], window=mfi_length).money_flow_index()
     df['mfi_bullish'] = df['mfi'] < 65
     df['mfi_bearish'] = df['mfi'] > 35
 
-    # Fibonacci Seviyeleri
+    # Fibo seviyesi
     highest_high = df['high'].rolling(window=fib_lookback).max()
     lowest_low = df['low'].rolling(window=fib_lookback).min()
     fib_level1 = highest_high * 0.618
@@ -221,21 +232,22 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     else:
         df['fib_in_range'] = True
 
-    # --- PineScript ile birebir AL/SAT sinyal mantığı ---
-    def crossover(series1, series2):
-        return (series1.shift(1) < series2.shift(1)) & (series1 > series2)
-    def crossunder(series1, series2):
-        return (series1.shift(1) > series2.shift(1)) & (series1 < series2) 
-    
+    def crossover(s1, s2):
+        return (s1.shift(1) < s2.shift(1)) & (s1 > s2)
+
+    def crossunder(s1, s2):
+        return (s1.shift(1) > s2.shift(1)) & (s1 < s2)
+
+    # Sinyaller
     buy_signal = (
         crossover(df['macd'], df['macd_signal']) |
         (
             (df['rsi'] < rsi_oversold) &
             (df['supertrend_dir'] == 1) &
-            (df['ma_bullish']) &
-            (df['enough_volume']) &
-            (df['mfi_bullish']) &
-            (df['trend_bullish'])
+            df['ma_bullish'] &
+            df['enough_volume'] &
+            df['mfi_bullish'] &
+            df['trend_bullish']
         )
     ) & df['fib_in_range']
 
@@ -244,17 +256,18 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
         (
             (df['rsi'] > rsi_overbought) &
             (df['supertrend_dir'] == -1) &
-            (df['ma_bearish']) &
-            (df['enough_volume']) &
-            (df['mfi_bearish']) &
-            (df['trend_bearish'])
+            df['ma_bearish'] &
+            df['enough_volume'] &
+            df['mfi_bearish'] &
+            df['trend_bearish']
         )
     ) & df['fib_in_range']
 
     df['signal'] = 0
     df.loc[buy_signal, 'signal'] = 1
     df.loc[sell_signal, 'signal'] = -1
-    
+
+    # MACD fallback
     if df['signal'].iloc[-1] == 0:
         if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
             df.at[df.index[-1], 'signal'] = 1

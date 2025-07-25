@@ -263,7 +263,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 
     return df
 
-async def get_active_high_volume_usdt_pairs(top_n=50):
+async def get_active_high_volume_usdt_pairs(top_n=40):
     """
     Sadece spotta aktif, USDT bazlı coinlerden hacme göre sıralanmış ilk top_n kadar uygun coin döndürür.
     Yeni coinler (1d verisi 30'dan az olanlar) elenir.

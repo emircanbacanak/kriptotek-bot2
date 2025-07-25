@@ -117,7 +117,6 @@ def create_signal_message(symbol, price, signals):
 
     🔹 Kripto Çifti: {symbol}  
     💵 Fiyat: {price_str}
-
     📈 Hedef Fiyat: {target_price_str}  
     🛑 Stop Loss: {stop_loss_str}  
     📊 Kaldıraç Önerisi: {leverage}x

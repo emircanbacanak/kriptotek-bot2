@@ -98,14 +98,14 @@ def create_signal_message(symbol, price, signals):
     
     if buy_count == 4:
         dominant_signal = "ALIŞ"
-        target_price = price * 1.02  # %2 hedef
-        stop_loss = price * 0.99     # %1 stop
+        target_price = price * 1.03  # %3 hedef
+        stop_loss = price * 0.985    # %1.5 stop
         sinyal_tipi = "AL SİNYALİ"
         leverage = 10
     elif sell_count == 4:
         dominant_signal = "SATIŞ"
-        target_price = price * 0.98  # %2 hedef
-        stop_loss = price * 1.01     # %1 stop
+        target_price = price * 0.97  # %3 hedef
+        stop_loss = price * 1.015    # %1.5 stop
         sinyal_tipi = "SAT SİNYALİ"
         leverage = 10
     else:
@@ -114,7 +114,16 @@ def create_signal_message(symbol, price, signals):
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
     message = f"""
-🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\nFiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n1 Saat: {signal_1h}\n2 Saat: {signal_2h}\n4 Saat: {signal_4h}\n1 Gün: {signal_1d}\n\nKaldıraç Önerisi: {leverage}x\n\n💰 Hedef Fiyat: {target_price_str}\n🛑 Stop Loss: {stop_loss_str}\n\n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n\n📋 DİKKAT:\n• Portföyünüzün max %5-10'unu kullanın\n• Stop loss'u mutlaka uygulayın\n• FOMO ile acele karar vermeyin\n• Hedef fiyata ulaşınca kar alın\n• Kendi araştırmanızı yapın\n"""
+🚨 {sinyal_tipi} \n\nKripto Çifti: {symbol}\n
+    Fiyat: {price_str}\n\n⏰ Zaman Dilimleri:\n
+    \nKaldıraç Önerisi: {leverage}x\n
+    \n💰 Hedef Fiyat: {target_price_str}\n
+    🛑 Stop Loss: {stop_loss_str}\n
+    \n⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️\n
+    \n📋 DİKKAT:\n
+    • Stop kullanın\n
+    • Acele karar vermeyin\n
+    • Kendi araştırmanızı yapın\n"""
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
 async def async_get_historical_data(symbol, interval, lookback):
@@ -556,14 +565,14 @@ async def main():
                 # Eğer pozisyon açıksa, yeni sinyal arama
                 if symbol in positions:
                     return
-                # Stop sonrası 4 saatlik cooldown kontrolü
+                # Stop sonrası 8 saatlik cooldown kontrolü
                 if symbol in stop_cooldown:
                     last_stop = stop_cooldown[symbol]
                     if (datetime.now() - last_stop) < timedelta(hours=8):
-                        return  # 4 saat dolmadıysa sinyal arama
+                        return  # 8 saat dolmadıysa sinyal arama
                     else:
-                        del stop_cooldown[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
-                # Başarılı sinyal sonrası 4 saatlik cooldown kontrolü
+                        del stop_cooldown[symbol]  # 8 saat dolduysa tekrar sinyal aranabilir
+                # Başarılı sinyal sonrası 8 saatlik cooldown kontrolü
                 for sdict in [successful_signals, failed_signals]:
                     if symbol in sdict:
                         last_time = sdict[symbol].get("completion_time")

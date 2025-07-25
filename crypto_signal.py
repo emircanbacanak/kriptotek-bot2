@@ -34,7 +34,7 @@ except ImportError:
 urllib3.disable_warnings(InsecureRequestWarning)
 
 # Telegram Bot ayarları
-TELEGRAM_TOKEN = "8091816386:AAFl-t7GNyUsKJ7uX5wu9D-HzPLp30NYg_c"
+TELEGRAM_TOKEN = "8091816386:AAEWRyP0PJKecYE9ozQLTsGwNjdLqkboWHo"
 TELEGRAM_CHAT_ID = "847081095"
 
 # Binance client oluştur (globalde)

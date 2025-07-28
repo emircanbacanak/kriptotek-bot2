@@ -90,7 +90,7 @@ def format_price(price, ref_price=None):
         else:
             return f"{price:.10f}".rstrip('0').rstrip('.')
 
-def create_signal_message(symbol, price, signals):
+def create_signal_message(symbol, price, signals, volume):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)
     signal_1h = "ALIŞ" if signals.get('1h', 0) == 1 else "SATIŞ"
@@ -117,13 +117,16 @@ def create_signal_message(symbol, price, signals):
     
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
-    message = f"""🚨 {sinyal_tipi} 🚨
+    volume_int = int(volume)  # Volume to integer
+    message = f"""
+    🚨 {sinyal_tipi} 🚨
 
     🔹 Kripto Çifti: {symbol}  
     💵 Fiyat: {price_str}
     📈 Hedef Fiyat: {target_price_str}  
     🛑 Stop Loss: {stop_loss_str}  
     📊 Kaldıraç Önerisi: {leverage}x
+    📉 Hacim: {volume_int}
 
     ⚠️ YATIRIM TAVSİYESİ DEĞİLDİR ⚠️
 
@@ -133,6 +136,7 @@ def create_signal_message(symbol, price, signals):
     • Kendi araştırmanızı yapın"""
 
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
+
 
 async def async_get_historical_data(symbol, interval, lookback):
     """Binance'den geçmiş verileri asenkron çek"""

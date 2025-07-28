@@ -19,6 +19,14 @@ from decimal import Decimal, ROUND_DOWN, getcontext
 import json
 import aiohttp
 import tqdm
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 
 # TR saat dilimi için zaman alma fonksiyonu
 try:
@@ -32,10 +40,6 @@ except ImportError:
 
 # SSL uyarılarını kapat
 urllib3.disable_warnings(InsecureRequestWarning)
-
-# Telegram Bot ayarları
-TELEGRAM_TOKEN = "8091816386:AAEWRyP0PJKecYE9ozQLTsGwNjdLqkboWHo"
-TELEGRAM_CHAT_ID = "847081095"
 
 # Binance client oluştur (globalde)
 client = Client()

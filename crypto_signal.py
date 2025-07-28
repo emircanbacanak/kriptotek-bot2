@@ -27,7 +27,6 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-
 # TR saat dilimi için zaman alma fonksiyonu
 try:
     from zoneinfo import ZoneInfo
@@ -60,7 +59,6 @@ def is_signal_search_allowed():
         return False
     return True
 
-# Dinamik fiyat formatlama fonksiyonu
 def format_price(price, ref_price=None):
     """
     Fiyatı, referans fiyatın ondalık basamak sayısı kadar string olarak döndürür.
@@ -137,13 +135,20 @@ def create_signal_message(symbol, price, signals, volume):
 
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
-
 async def async_get_historical_data(symbol, interval, lookback):
     """Binance'den geçmiş verileri asenkron çek"""
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={lookback}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, ssl=False) as resp:
-            klines = await resp.json()
+    try:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=10)) as session:
+            async with session.get(url, ssl=False) as resp:
+                if resp.status != 200:
+                    raise Exception(f"API hatası: {resp.status} - {await resp.text()}")
+                klines = await resp.json()
+                if not klines or len(klines) == 0:
+                    raise Exception(f"{symbol} için veri yok")
+    except Exception as e:
+        raise Exception(f"Veri çekme hatası: {symbol} - {interval} - {str(e)}")
+    
     df = pd.DataFrame(klines, columns=[
         'timestamp', 'open', 'high', 'low', 'close', 'volume',
         'close_time', 'quote_volume', 'trades', 'taker_buy_base',
@@ -154,7 +159,7 @@ async def async_get_historical_data(symbol, interval, lookback):
     df['high'] = df['high'].astype(float)
     df['low'] = df['low'].astype(float)
     df['volume'] = df['volume'].astype(float)
-    df['open'] = df['open'].astype(float) # 'open' sütununu da float'a çevir
+    df['open'] = df['open'].astype(float)
     return df
 
 def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
@@ -229,7 +234,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 
     df['supertrend_dir'] = supertrend(df, atr_period, atr_multiplier)
 
-    # MA'ler
+    # MA'lar
     df['short_ma'] = ta.trend.EMAIndicator(df['close'], window=short_ma_period).ema_indicator()
     df['long_ma'] = ta.trend.EMAIndicator(df['close'], window=long_ma_period).ema_indicator()
     df['ma_bullish'] = df['short_ma'] > df['long_ma']
@@ -300,7 +305,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 async def get_active_high_volume_usdt_pairs(top_n=40):
     """
     Sadece spotta aktif, USDT bazlı coinlerden hacme göre sıralanmış ilk top_n kadar uygun coin döndürür.
-    Yeni coinler (1d verisi 30'dan az olanlar) elenir.
+    1 günlük verisi 30 mumdan az olan coin'ler elenir.
     """
     exchange_info = client.get_exchange_info()
     tickers = client.get_ticker()
@@ -332,14 +337,17 @@ async def get_active_high_volume_usdt_pairs(top_n=40):
     while len(uygun_pairs) < top_n and idx < len(high_volume_pairs):
         symbol, volume = high_volume_pairs[idx]
         try:
-            df_1d = await async_get_historical_data(symbol, '1d', 40)
+            # En az 30 mum 1 günlük veri kontrolü
+            df_1d = await async_get_historical_data(symbol, '1d', 30)
             if len(df_1d) < 30:
-                print(f"{symbol}: 1d veri yetersiz ({len(df_1d)})")
+                print(f"{symbol}: 1d veri yetersiz ({len(df_1d)} mum)")
                 idx += 1
                 continue
             uygun_pairs.append(symbol)
         except Exception as e:
             print(f"{symbol}: 1d veri çekilemedi: {e}")
+            idx += 1
+            continue
         idx += 1
 
     return uygun_pairs
@@ -596,7 +604,7 @@ async def main():
                                 del sdict[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
                 # 1d'lik veri kontrolü
                 try:
-                    df_1d = await async_get_historical_data(symbol, timeframes['1d'], 40)
+                    df_1d = await async_get_historical_data(symbol, timeframes['1d'], 30)
                     if len(df_1d) < 30:
                         print(f"UYARI: {symbol} için 1d veri 30'dan az, sinyal aranmıyor.")
                         return
@@ -607,7 +615,7 @@ async def main():
                 current_signals = dict()
                 for tf_name in tf_names:
                     try:
-                        df = await async_get_historical_data(symbol, timeframes[tf_name], 200) 
+                        df = await async_get_historical_data(symbol, timeframes[tf_name], 200)
                         df = calculate_full_pine_signals(df, tf_name)
                         signal = int(df['signal'].iloc[-1])
                         # Sinyal 0 ise MACD ile düzelt
@@ -619,18 +627,7 @@ async def main():
                         current_signals[tf_name] = signal
                     except Exception as e:
                         print(f"Hata: {symbol} - {tf_name} - {str(e)}")
-                        # MACD ile fallback
-                        try:
-                            if 'macd' in df.columns and 'macd_signal' in df.columns and len(df) > 0:
-                                if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
-                                    signal = 1
-                                else:
-                                    signal = -1
-                            else:
-                                signal = 1
-                        except:
-                            signal = 1
-                        current_signals[tf_name] = signal
+                        return  # Hata varsa bu coin için sinyal üretme
                 # İlk çalıştırmada sadece sinyalleri kaydet
                 if first_run:
                     previous_signals[symbol] = current_signals.copy()
@@ -709,10 +706,11 @@ async def main():
                         return
                     # Yeni sinyal gönder
                     sent_signals[signal_key] = signal_values.copy()
-                    # Fiyatı çek
+                    # Fiyat ve hacmi çek
                     df = await async_get_historical_data(symbol, '2h', 2)
                     price = float(df['close'].iloc[-1])
-                    message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals)
+                    volume = float(df['volume'].iloc[-1])  # Son mumun hacmini al
+                    message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume)
                     if message:
                         print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
                         await send_telegram_message(message)
@@ -862,8 +860,8 @@ async def main():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(10)
+            await asyncio.sleep(30)
 
 if __name__ == "__main__":
     # Gerçek zamanlı botu çalıştırmak için:
-    asyncio.run(main()) 
+    asyncio.run(main())

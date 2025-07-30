@@ -767,12 +767,12 @@ async def get_active_high_volume_usdt_pairs(top_n=50):
             # En az 30 mum 1 günlük veri kontrolü
             df_1d = await async_get_historical_data(symbol, '1d', 30)
             if len(df_1d) < 30:
-                print(f"{symbol}: 1d veri yetersiz ({len(df_1d)} mum)")
+                # Sessizce atla, mesaj yazdırma
                 idx += 1
                 continue
             uygun_pairs.append(symbol)
         except Exception as e:
-            print(f"{symbol}: 1d veri çekilemedi: {e}")
+            # Sessizce atla, mesaj yazdırma
             idx += 1
             continue
         idx += 1
@@ -1335,29 +1335,22 @@ async def main():
     except Exception as e:
         print(f"⚠️ Polling öncesi webhook temizleme hatası: {e}")
     
-    # Polling'i başlat
-    bot_polling_task = asyncio.create_task(app.updater.start_polling(
-        drop_pending_updates=True, 
-        allowed_updates=["message", "callback_query"],
-        timeout=30,
-        read_timeout=30,
-        write_timeout=30,
-        connect_timeout=30
-    ))
+    # Telegram bot polling'i devre dışı bırak (conflict hatası nedeniyle)
+    print("⚠️ Telegram bot polling devre dışı bırakıldı (conflict hatası nedeniyle)")
+    print("📊 Bot sadece sinyal işleme modunda çalışacak")
     
-    # Sinyal işleme döngüsünü ayrı bir task olarak başlat
+    # Sadece sinyal işleme döngüsünü başlat
     signal_task = asyncio.create_task(signal_processing_loop())
     
     try:
-        # Her iki task'ın da tamamlanmasını bekle (normalde bot kapatılana kadar çalışırlar)
-        await asyncio.gather(bot_polling_task, signal_task)
+        # Sadece sinyal task'ının tamamlanmasını bekle
+        await signal_task
     except KeyboardInterrupt:
         print("\n⚠️ Bot kapatılıyor...")
     finally:
-        # Uygulama kapatılırken botu durdur ve MongoDB'yi kapat
-        await app.stop()
+        # Uygulama kapatılırken MongoDB'yi kapat
         close_mongodb()
-        print("✅ Bot ve MongoDB bağlantısı kapatıldı")
+        print("✅ MongoDB bağlantısı kapatıldı")
 
 if __name__ == "__main__":
     asyncio.run(main())

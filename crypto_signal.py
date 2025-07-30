@@ -169,18 +169,21 @@ async def send_signal_to_all_users(message):
     """Sinyali tüm kayıtlı kullanıcılara gönder"""
     sent_chats = set()  # Gönderilen chat'leri takip et
     
-    # Bot sahibine gönder
-    if BOT_OWNER_ID:
+    # Bot sahibine gönder (eğer ALLOWED_USERS'da değilse)
+    if BOT_OWNER_ID and BOT_OWNER_ID not in ALLOWED_USERS:
         await send_telegram_message(message, BOT_OWNER_ID)
         sent_chats.add(BOT_OWNER_ID)
         print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
     
-    # İzin verilen kullanıcılara gönder
+    # İzin verilen kullanıcılara gönder (bot sahibi dahil)
     for user_id in ALLOWED_USERS:
         if user_id not in sent_chats:  # Daha önce gönderilmediyse
             try:
                 await send_telegram_message(message, user_id)
-                print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
+                if user_id == BOT_OWNER_ID:
+                    print(f"✅ Bot sahibine sinyal gönderildi (kullanıcı listesinden): {user_id}")
+                else:
+                    print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
                 sent_chats.add(user_id)
             except Exception as e:
                 print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
@@ -1007,7 +1010,7 @@ async def signal_processing_loop():
                         continue
                 
                 # Aktif sinyaller için 30 dakika bekle
-                await asyncio.sleep(1800)
+                await asyncio.sleep(600)  # 10 dakika
                 continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
@@ -1289,8 +1292,8 @@ async def signal_processing_loop():
             else:
                 print(f"   Başarı Oranı: %0.0")
             # Döngü sonunda bekleme süresi
-            print("Tüm coinler kontrol edildi. 30 dakika bekleniyor...")
-            await asyncio.sleep(1800)
+            print("Tüm coinler kontrol edildi. 10 dakika bekleniyor...")
+            await asyncio.sleep(600)
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -1302,7 +1305,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(1800)
+            await asyncio.sleep(600)  # 10 dakika
 
 async def main():
     # İzin verilen kullanıcıları yükle

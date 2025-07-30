@@ -167,19 +167,28 @@ async def send_telegram_message(message, chat_id=None):
 
 async def send_signal_to_all_users(message):
     """Sinyali tüm kayıtlı kullanıcılara gönder"""
+    sent_chats = set()  # Gönderilen chat'leri takip et
+    
     # Bot sahibine gönder
-    await send_telegram_message(message, BOT_OWNER_ID)
+    if BOT_OWNER_ID:
+        await send_telegram_message(message, BOT_OWNER_ID)
+        sent_chats.add(BOT_OWNER_ID)
+        print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
     
     # İzin verilen kullanıcılara gönder
     for user_id in ALLOWED_USERS:
-        try:
-            await send_telegram_message(message, user_id)
-            print(f"✅ Sinyal gönderildi: {user_id}")
-        except Exception as e:
-            print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
+        if user_id not in sent_chats:  # Daha önce gönderilmediyse
+            try:
+                await send_telegram_message(message, user_id)
+                print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
+                sent_chats.add(user_id)
+            except Exception as e:
+                print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
     
-    # Ana chat'e de gönder (isteğe bağlı)
-    await send_telegram_message(message, TELEGRAM_CHAT_ID)
+    # Ana chat'e gönder (eğer daha önce gönderilmediyse)
+    if TELEGRAM_CHAT_ID and TELEGRAM_CHAT_ID not in sent_chats:
+        await send_telegram_message(message, TELEGRAM_CHAT_ID)
+        print(f"✅ Ana chat'e sinyal gönderildi: {TELEGRAM_CHAT_ID}")
 
 async def start_command(update, context):
     """Bot başlatma komutu"""
@@ -709,7 +718,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 
     return df
 
-async def get_active_high_volume_usdt_pairs(top_n=40):
+async def get_active_high_volume_usdt_pairs(top_n=50):
     """
     Sadece spotta aktif, USDT bazlı coinlerden hacme göre sıralanmış ilk top_n kadar uygun coin döndürür.
     1 günlük verisi 30 mumdan az olan coin'ler elenir.

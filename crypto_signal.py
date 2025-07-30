@@ -153,9 +153,33 @@ global_active_signals = {}
 global_successful_signals = {}
 global_failed_signals = {}
 
-async def send_telegram_message(message):
+async def send_telegram_message(message, chat_id=None):
     """Telegram'a mesaj gönder"""
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='HTML')
+    if chat_id is None:
+        chat_id = TELEGRAM_CHAT_ID
+    
+    try:
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
+        return True
+    except Exception as e:
+        print(f"❌ Mesaj gönderme hatası (chat_id: {chat_id}): {e}")
+        return False
+
+async def send_signal_to_all_users(message):
+    """Sinyali tüm kayıtlı kullanıcılara gönder"""
+    # Bot sahibine gönder
+    await send_telegram_message(message, BOT_OWNER_ID)
+    
+    # İzin verilen kullanıcılara gönder
+    for user_id in ALLOWED_USERS:
+        try:
+            await send_telegram_message(message, user_id)
+            print(f"✅ Sinyal gönderildi: {user_id}")
+        except Exception as e:
+            print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
+    
+    # Ana chat'e de gönder (isteğe bağlı)
+    await send_telegram_message(message, TELEGRAM_CHAT_ID)
 
 async def start_command(update, context):
     """Bot başlatma komutu"""
@@ -778,8 +802,11 @@ async def signal_processing_loop():
                 # Aktif pozisyonları kontrol etmeye devam et
                 for symbol, pos in list(positions.items()):
                     try:
-                        df = await async_get_historical_data(symbol, '2h', 2)
+                        df = await async_get_historical_data(symbol, '2h', 3)  # Son 3 mumu al
                         last_price = float(df['close'].iloc[-1])
+                        current_open = float(df['open'].iloc[-1])
+                        current_high = float(df['high'].iloc[-1])
+                        current_low = float(df['low'].iloc[-1])
                         
                         # Aktif sinyal bilgilerini güncelle
                         if symbol in active_signals:
@@ -788,9 +815,10 @@ async def signal_processing_loop():
                             active_signals[symbol]["last_update"] = str(datetime.now())
                         
                         if pos["type"] == "ALIŞ":
-                            if last_price >= pos["target"]:
+                            # Hedef kontrolü: High fiyatı hedefe ulaştı mı? (daha hassas)
+                            if current_high >= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                                await send_telegram_message(msg)
+                                await send_signal_to_all_users(msg)
                                 cooldown_signals[(symbol, "ALIS")] = datetime.now()
                                 
                                 # Başarılı sinyal olarak kaydet
@@ -821,9 +849,10 @@ async def signal_processing_loop():
                                     del active_signals[symbol]
                                 
                                 del positions[symbol]
-                            elif last_price <= pos["stop"]:
+                            # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (daha hassas)
+                            elif current_low <= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
-                                await send_telegram_message(msg)
+                                await send_signal_to_all_users(msg)
                                 cooldown_signals[(symbol, "ALIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
                                 
@@ -870,9 +899,10 @@ async def signal_processing_loop():
                                 
                                 del positions[symbol]
                         elif pos["type"] == "SATIŞ":
-                            if last_price <= pos["target"]:
+                            # Hedef kontrolü: Low fiyatı hedefe ulaştı mı? (daha hassas)
+                            if current_low <= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                                await send_telegram_message(msg)
+                                await send_signal_to_all_users(msg)
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 
                                 # Başarılı sinyal olarak kaydet
@@ -903,9 +933,10 @@ async def signal_processing_loop():
                                     del active_signals[symbol]
                                 
                                 del positions[symbol]
-                            elif last_price >= pos["stop"]:
+                            # Stop kontrolü: High fiyatı stop'a ulaştı mı? (daha hassas)
+                            elif current_high >= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
-                                await send_telegram_message(msg)
+                                await send_signal_to_all_users(msg)
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
                                 
@@ -955,8 +986,8 @@ async def signal_processing_loop():
                         print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                         continue
                 
-                # 30 saniye bekle ve döngüye devam et
-                await asyncio.sleep(30)
+                # Aktif sinyaller için 30 dakika bekle
+                await asyncio.sleep(1800)
                 continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
@@ -1097,7 +1128,7 @@ async def signal_processing_loop():
                     message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume)
                     if message:
                         print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
-                        await send_telegram_message(message)
+                        await send_signal_to_all_users(message)
                         # Pozisyonu kaydet
                         positions[symbol] = {
                             "type": dominant_signal,
@@ -1238,8 +1269,8 @@ async def signal_processing_loop():
             else:
                 print(f"   Başarı Oranı: %0.0")
             # Döngü sonunda bekleme süresi
-            print("Tüm coinler kontrol edildi. 30 saniye bekleniyor...")
-            await asyncio.sleep(30)
+            print("Tüm coinler kontrol edildi. 30 dakika bekleniyor...")
+            await asyncio.sleep(1800)
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -1251,7 +1282,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(30)
+            await asyncio.sleep(1800)
 
 async def main():
     # İzin verilen kullanıcıları yükle
@@ -1271,7 +1302,15 @@ async def main():
     except Exception as e:
         print(f"⚠️ Ana fonksiyonda webhook temizleme hatası: {e}")
     
-    bot_polling_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
+    # Polling başlatmadan önce ek güvenlik
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Polling öncesi webhook'lar temizlendi")
+        await asyncio.sleep(2)  # Kısa bekleme
+    except Exception as e:
+        print(f"⚠️ Polling öncesi webhook temizleme hatası: {e}")
+    
+    bot_polling_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"]))
     
     # Sinyal işleme döngüsünü ayrı bir task olarak başlat
     signal_task = asyncio.create_task(signal_processing_loop())

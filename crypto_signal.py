@@ -22,11 +22,18 @@ import aiohttp
 import tqdm
 from dotenv import load_dotenv
 import os
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# MongoDB bağlantı bilgileri
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+MONGODB_DB = os.getenv("MONGODB_DB", "crypto_signal_bot")
+MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "allowed_users")
 
 # TR saat dilimi için zaman alma fonksiyonu
 try:
@@ -50,42 +57,95 @@ bot = telegram.Bot(token=TELEGRAM_TOKEN)
 # Bot sahibinin ID'si (bu değeri .env dosyasından alabilirsiniz)
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 
+# MongoDB bağlantısı
+mongo_client = None
+mongo_db = None
+mongo_collection = None
+
 # İzin verilen kullanıcılar listesi (bot sahibi tarafından yönetilir)
 ALLOWED_USERS = set()
 
+def connect_mongodb():
+    """MongoDB bağlantısını kur"""
+    global mongo_client, mongo_db, mongo_collection
+    try:
+        mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        # Bağlantıyı test et
+        mongo_client.admin.command('ping')
+        mongo_db = mongo_client[MONGODB_DB]
+        mongo_collection = mongo_db[MONGODB_COLLECTION]
+        print("✅ MongoDB bağlantısı başarılı")
+        return True
+    except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+        print(f"❌ MongoDB bağlantı hatası: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ MongoDB bağlantı hatası: {e}")
+        return False
+
 def load_allowed_users():
-    """İzin verilen kullanıcıları dosyadan yükle"""
+    """İzin verilen kullanıcıları MongoDB'den yükle"""
     global ALLOWED_USERS
     try:
-        if os.path.exists(ALLOWED_USERS_FILE):
-            with open(ALLOWED_USERS_FILE, 'r') as f:
-                data = json.load(f)
-                ALLOWED_USERS = set(data.get('allowed_users', []))
-                print(f"✅ {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi")
+        if not connect_mongodb():
+            print("⚠️ MongoDB bağlantısı kurulamadı, boş liste ile başlatılıyor")
+            ALLOWED_USERS = set()
+            return
+        
+        # MongoDB'den kullanıcıları çek
+        if mongo_collection is not None:
+            users_doc = mongo_collection.find_one({"_id": "allowed_users"})
+            if users_doc:
+                ALLOWED_USERS = set(users_doc.get('user_ids', []))
+                print(f"✅ MongoDB'den {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi")
+            else:
+                print("ℹ️ MongoDB'de izin verilen kullanıcı bulunamadı, boş liste ile başlatılıyor")
+                ALLOWED_USERS = set()
         else:
-            print("ℹ️ İzin verilen kullanıcı dosyası bulunamadı, boş liste ile başlatılıyor")
+            print("⚠️ MongoDB collection bulunamadı, boş liste ile başlatılıyor")
+            ALLOWED_USERS = set()
     except Exception as e:
-        print(f"❌ İzin verilen kullanıcılar yüklenirken hata: {e}")
+        print(f"❌ MongoDB'den kullanıcılar yüklenirken hata: {e}")
         ALLOWED_USERS = set()
 
 def save_allowed_users():
-    """İzin verilen kullanıcıları dosyaya kaydet"""
+    """İzin verilen kullanıcıları MongoDB'ye kaydet"""
     try:
-        data = {
-            'allowed_users': list(ALLOWED_USERS),
-            'last_updated': str(datetime.now())
-        }
-        with open(ALLOWED_USERS_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-        print(f"✅ {len(ALLOWED_USERS)} izin verilen kullanıcı kaydedildi")
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, kullanıcılar kaydedilemedi")
+                return
+        
+        # Upsert ile kaydet (varsa güncelle, yoksa ekle)
+        mongo_collection.update_one(
+            {"_id": "allowed_users"},
+            {
+                "$set": {
+                    "user_ids": list(ALLOWED_USERS),
+                    "last_updated": str(datetime.now()),
+                    "count": len(ALLOWED_USERS)
+                }
+            },
+            upsert=True
+        )
+        print(f"✅ MongoDB'ye {len(ALLOWED_USERS)} izin verilen kullanıcı kaydedildi")
     except Exception as e:
-        print(f"❌ İzin verilen kullanıcılar kaydedilirken hata: {e}")
+        print(f"❌ MongoDB'ye kullanıcılar kaydedilirken hata: {e}")
+
+def close_mongodb():
+    """MongoDB bağlantısını kapat"""
+    global mongo_client
+    if mongo_client:
+        try:
+            mongo_client.close()
+            print("✅ MongoDB bağlantısı kapatıldı")
+        except Exception as e:
+            print(f"⚠️ MongoDB bağlantısı kapatılırken hata: {e}")
 
 # Bot handler'ları için global değişkenler
 app = None
 
-# İzin verilen kullanıcıları kalıcı olarak saklamak için dosya
-ALLOWED_USERS_FILE = 'allowed_users.json'
+# MongoDB kullanıldığı için dosya referansını kaldırıyoruz
 
 # Global değişkenler (main fonksiyonundan erişim için)
 global_stats = {}
@@ -287,7 +347,19 @@ async def handle_message(update, context):
 
 async def error_handler(update, context):
     """Hata handler'ı"""
-    print(f"Bot hatası: {context.error}")
+    error = context.error
+    print(f"Bot hatası: {error}")
+    
+    # Conflict hatası için özel işlem
+    if "Conflict" in str(error) and "getUpdates" in str(error):
+        print("⚠️ Conflict hatası tespit edildi. Bot yeniden başlatılıyor...")
+        try:
+            await app.bot.delete_webhook(drop_pending_updates=True)
+            print("✅ Webhook'lar temizlendi, bot devam ediyor...")
+        except Exception as e:
+            print(f"❌ Webhook temizleme hatası: {e}")
+        return
+    
     if update and update.effective_chat:
         if update.effective_chat.type == "private":
             user_id = update.effective_user.id
@@ -333,6 +405,13 @@ async def setup_bot():
     global app
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
+    # Mevcut webhook'ları temizle ve offset'i sıfırla
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Mevcut webhook'lar temizlendi ve pending updates silindi")
+    except Exception as e:
+        print(f"⚠️ Webhook temizleme hatası: {e}")
+    
     # Komut handler'ları
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -359,7 +438,7 @@ def is_signal_search_allowed():
     now = get_tr_time()
     current_hour = now.hour
     # Yasaklı saat aralıkları: 01:00-08:00 ve 13:00-17:00
-    if (1 <= current_hour < 8) or (13 <= current_hour < 17):
+    if (2 <= current_hour < 7) or (14 <= current_hour < 16):
         return False
     return True
 
@@ -1184,16 +1263,29 @@ async def main():
     # Bot'u ve sinyal işleme döngüsünü paralel olarak çalıştır
     await app.initialize()
     await app.start()
-    bot_polling_task = asyncio.create_task(app.updater.start_polling())
+    
+    # Polling başlatmadan önce ek güvenlik
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Ana fonksiyonda webhook'lar temizlendi")
+    except Exception as e:
+        print(f"⚠️ Ana fonksiyonda webhook temizleme hatası: {e}")
+    
+    bot_polling_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
     
     # Sinyal işleme döngüsünü ayrı bir task olarak başlat
     signal_task = asyncio.create_task(signal_processing_loop())
     
-    # Her iki task'ın da tamamlanmasını bekle (normalde bot kapatılana kadar çalışırlar)
-    await asyncio.gather(bot_polling_task, signal_task)
-    
-    # Uygulama kapatılırken botu durdur
-    await app.stop()
+    try:
+        # Her iki task'ın da tamamlanmasını bekle (normalde bot kapatılana kadar çalışırlar)
+        await asyncio.gather(bot_polling_task, signal_task)
+    except KeyboardInterrupt:
+        print("\n⚠️ Bot kapatılıyor...")
+    finally:
+        # Uygulama kapatılırken botu durdur ve MongoDB'yi kapat
+        await app.stop()
+        close_mongodb()
+        print("✅ Bot ve MongoDB bağlantısı kapatıldı")
 
 if __name__ == "__main__":
     asyncio.run(main())

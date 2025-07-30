@@ -8,3 +8,4 @@ ta==0.10.2
 certifi
 tqdm
 pytz
+pymongo==4.6.1

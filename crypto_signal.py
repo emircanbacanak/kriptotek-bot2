@@ -387,10 +387,21 @@ async def error_handler(update, context):
     if "Conflict" in str(error) and "getUpdates" in str(error):
         print("⚠️ Conflict hatası tespit edildi. Bot yeniden başlatılıyor...")
         try:
+            # Webhook'ları temizle
             await app.bot.delete_webhook(drop_pending_updates=True)
-            print("✅ Webhook'lar temizlendi, bot devam ediyor...")
+            print("✅ Webhook'lar temizlendi")
+            
+            # 5 saniye bekle
+            await asyncio.sleep(5)
+            
+            # Polling'i yeniden başlat
+            await app.updater.stop()
+            await asyncio.sleep(2)
+            await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+            print("✅ Bot yeniden başlatıldı")
+            
         except Exception as e:
-            print(f"❌ Webhook temizleme hatası: {e}")
+            print(f"❌ Bot yeniden başlatma hatası: {e}")
         return
     
     if update and update.effective_chat:
@@ -1315,11 +1326,24 @@ async def main():
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
         print("✅ Polling öncesi webhook'lar temizlendi")
-        await asyncio.sleep(2)  # Kısa bekleme
+        await asyncio.sleep(3)  # Daha uzun bekleme
+        
+        # Webhook durumunu kontrol et
+        webhook_info = await app.bot.get_webhook_info()
+        print(f"Webhook durumu: {webhook_info}")
+        
     except Exception as e:
         print(f"⚠️ Polling öncesi webhook temizleme hatası: {e}")
     
-    bot_polling_task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"]))
+    # Polling'i başlat
+    bot_polling_task = asyncio.create_task(app.updater.start_polling(
+        drop_pending_updates=True, 
+        allowed_updates=["message", "callback_query"],
+        timeout=30,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30
+    ))
     
     # Sinyal işleme döngüsünü ayrı bir task olarak başlat
     signal_task = asyncio.create_task(signal_processing_loop())

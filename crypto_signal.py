@@ -11,6 +11,7 @@ import ta
 import time
 from datetime import datetime, timedelta
 import telegram
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
 import certifi
 from urllib3.exceptions import InsecureRequestWarning
@@ -46,9 +47,271 @@ client = Client()
 # Telegram bot oluştur
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
+# Bot sahibinin ID'si (bu değeri .env dosyasından alabilirsiniz)
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
+
+# İzin verilen kullanıcılar listesi (bot sahibi tarafından yönetilir)
+ALLOWED_USERS = set()
+
+# Bot handler'ları için global değişkenler
+app = None
+
+# Global değişkenler (main fonksiyonundan erişim için)
+global_stats = {}
+global_active_signals = {}
+global_successful_signals = {}
+global_failed_signals = {}
+
 async def send_telegram_message(message):
     """Telegram'a mesaj gönder"""
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='HTML')
+
+async def start_command(update, context):
+    """Bot başlatma komutu"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
+        return
+    
+    await update.message.reply_text("🚀 Kripto Sinyal Botu başlatıldı!\n\nBu bot kripto para sinyallerini takip eder ve size bildirim gönderir.")
+
+async def help_command(update, context):
+    """Yardım komutu"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
+        return
+    
+    help_text = """
+🤖 **Kripto Sinyal Botu Komutları:**
+
+/start - Botu başlat
+/help - Bu yardım mesajını göster
+/stats - İstatistikleri göster
+/active - Aktif sinyalleri göster
+/adduser <user_id> - Kullanıcı ekle (sadece bot sahibi)
+/removeuser <user_id> - Kullanıcı çıkar (sadece bot sahibi)
+/listusers - İzin verilen kullanıcıları listele (sadece bot sahibi)
+
+⚠️ **Not:** Bu bot sadece özel sohbetlerde çalışır.
+    """
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def stats_command(update, context):
+    """İstatistik komutu"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
+        return
+    
+    # Global istatistikleri kullan
+    stats = global_stats
+    if not stats:
+        stats_text = "📊 **Bot İstatistikleri:**\n\nHenüz istatistik verisi yok."
+    else:
+        closed_count = stats.get('successful_signals', 0) + stats.get('failed_signals', 0)
+        success_rate = 0
+        if closed_count > 0:
+            success_rate = (stats.get('successful_signals', 0) / closed_count) * 100
+        
+        stats_text = f"""📊 **Bot İstatistikleri:**
+
+📈 **Genel Durum:**
+• Toplam Sinyal: {stats.get('total_signals', 0)}
+• Başarılı: {stats.get('successful_signals', 0)}
+• Başarısız: {stats.get('failed_signals', 0)}
+• Aktif Sinyal: {stats.get('active_signals_count', 0)}
+• Takip Edilen Coin: {stats.get('tracked_coins_count', 0)}
+
+💰 **Kar/Zarar (100$ yatırım):**
+• Toplam: ${stats.get('total_profit_loss', 0):.2f}
+• Başarı Oranı: %{success_rate:.1f}
+
+🕒 **Son Güncelleme:** {datetime.now().strftime('%H:%M:%S')}"""
+    
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
+
+async def active_command(update, context):
+    """Aktif sinyaller komutu"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
+        return
+    
+    # Global aktif sinyalleri kullan
+    active_signals = global_active_signals
+    if not active_signals:
+        active_text = "📈 **Aktif Sinyaller:**\n\nHenüz aktif sinyal yok."
+    else:
+        active_text = "📈 **Aktif Sinyaller:**\n\n"
+        for symbol, signal in active_signals.items():
+            active_text += f"""🔹 **{symbol}** ({signal['type']})
+• Giriş: {signal['entry_price']}
+• Hedef: {signal['target_price']}
+• Stop: {signal['stop_loss']}
+• Şu anki: {signal['current_price']}
+• Kaldıraç: {signal['leverage']}x
+• Sinyal: {signal['signal_time']}
+
+"""
+    
+    await update.message.reply_text(active_text, parse_mode='Markdown')
+
+async def adduser_command(update, context):
+    """Kullanıcı ekleme komutu (sadece bot sahibi)"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Kullanım: /adduser <user_id>")
+        return
+    
+    try:
+        new_user_id = int(context.args[0])
+        ALLOWED_USERS.add(new_user_id)
+        await update.message.reply_text(f"✅ Kullanıcı {new_user_id} başarıyla eklendi.")
+    except ValueError:
+        await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
+
+async def removeuser_command(update, context):
+    """Kullanıcı çıkarma komutu (sadece bot sahibi)"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Kullanım: /removeuser <user_id>")
+        return
+    
+    try:
+        remove_user_id = int(context.args[0])
+        if remove_user_id in ALLOWED_USERS:
+            ALLOWED_USERS.remove(remove_user_id)
+            await update.message.reply_text(f"✅ Kullanıcı {remove_user_id} başarıyla çıkarıldı.")
+        else:
+            await update.message.reply_text(f"❌ Kullanıcı {remove_user_id} zaten izin verilen kullanıcılar listesinde yok.")
+    except ValueError:
+        await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
+
+async def listusers_command(update, context):
+    """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi)"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    if not ALLOWED_USERS:
+        users_text = "📋 **İzin Verilen Kullanıcılar:**\n\nHenüz izin verilen kullanıcı yok."
+    else:
+        users_list = "\n".join([f"• {user_id}" for user_id in ALLOWED_USERS])
+        users_text = f"📋 **İzin Verilen Kullanıcılar:**\n\n{users_list}"
+    
+    await update.message.reply_text(users_text, parse_mode='Markdown')
+
+async def handle_message(update, context):
+    """Genel mesaj handler'ı"""
+    if update.effective_chat.type != "private":
+        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
+        return
+    
+    await update.message.reply_text("🤖 Bu bot sadece komutları destekler. /help yazarak mevcut komutları görebilirsiniz.")
+
+async def error_handler(update, context):
+    """Hata handler'ı"""
+    print(f"Bot hatası: {context.error}")
+    if update and update.effective_chat:
+        if update.effective_chat.type == "private":
+            user_id = update.effective_user.id
+            if user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS:
+                await update.message.reply_text("❌ Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
+
+async def handle_chat_member_update(update, context):
+    """Grup ekleme/çıkarma olaylarını dinler"""
+    chat = update.effective_chat
+    
+    # Yeni üye eklenme durumu
+    if update.message and update.message.new_chat_members:
+        for new_member in update.message.new_chat_members:
+            # Bot'un kendisi eklenmiş mi?
+            if new_member.id == context.bot.id:
+                # Bot sahibi tarafından mı eklendi?
+                user_id = update.effective_user.id
+                
+                if user_id != BOT_OWNER_ID:
+                    # Bot sahibi olmayan biri ekledi, gruptan çık
+                    try:
+                        await context.bot.leave_chat(chat.id)
+                        print(f"❌ Bot sahibi olmayan {user_id} tarafından {chat.title} grubuna eklenmeye çalışıldı. Bot gruptan çıktı.")
+                        
+                        # Bot sahibine bildirim gönder
+                        warning_msg = f"⚠️ **GÜVENLİK UYARISI** ⚠️\n\nBot sahibi olmayan bir kullanıcı ({user_id}) bot'u '{chat.title}' grubuna eklemeye çalıştı.\n\nBot otomatik olarak gruptan çıktı.\n\nGrup ID: {chat.id}"
+                        await send_telegram_message(warning_msg)
+                        
+                    except Exception as e:
+                        print(f"Gruptan çıkma hatası: {e}")
+                else:
+                    print(f"✅ Bot sahibi tarafından {chat.title} grubuna eklendi.")
+    
+    # Üye çıkma durumu
+    elif update.message and update.message.left_chat_member:
+        left_member = update.message.left_chat_member
+        # Bot'un kendisi çıkarılmış mı?
+        if left_member.id == context.bot.id:
+            print(f"Bot {chat.title} grubundan çıkarıldı.")
+
+async def setup_bot():
+    """Bot handler'larını kur"""
+    global app
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Komut handler'ları
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("active", active_command))
+    app.add_handler(CommandHandler("adduser", adduser_command))
+    app.add_handler(CommandHandler("removeuser", removeuser_command))
+    app.add_handler(CommandHandler("listusers", listusers_command))
+    
+    # Genel mesaj handler'ı
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Grup ekleme/çıkarma handler'ı - ChatMemberUpdated event'ini dinle
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_chat_member_update))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_chat_member_update))
+    
+    # Hata handler'ı
+    app.add_error_handler(error_handler)
+    
+    print("Bot handler'ları kuruldu!")
 
 def is_signal_search_allowed():
     """Sinyal aramaya izin verilen saatleri kontrol eder"""
@@ -352,7 +615,8 @@ async def get_active_high_volume_usdt_pairs(top_n=40):
 
     return uygun_pairs
 
-async def main():
+async def signal_processing_loop():
+    """Sinyal arama ve işleme döngüsü"""
     sent_signals = dict()  # {(symbol, sinyal_tipi): signal_values}
     positions = dict()  # {symbol: position_info}
     cooldown_signals = dict()  # {(symbol, sinyal_tipi): datetime}
@@ -773,6 +1037,13 @@ async def main():
             stats["active_signals_count"] = len(active_signals)
             stats["tracked_coins_count"] = len(tracked_coins)
             
+            # Global değişkenleri güncelle (bot komutları için)
+            global global_stats, global_active_signals, global_successful_signals, global_failed_signals
+            global_stats = stats.copy()
+            global_active_signals = active_signals.copy()
+            global_successful_signals = successful_signals.copy()
+            global_failed_signals = failed_signals.copy()
+            
             # STOP OLAN COINLERİ TAKİP ET
             for symbol, info in list(stopped_coins.items()):
                 try:
@@ -862,6 +1133,23 @@ async def main():
             print(f"Genel hata: {e}")
             await asyncio.sleep(30)
 
+async def main():
+    # Bot'u başlat
+    await setup_bot()
+    
+    # Bot'u ve sinyal işleme döngüsünü paralel olarak çalıştır
+    await app.initialize()
+    await app.start()
+    bot_polling_task = asyncio.create_task(app.updater.start_polling())
+    
+    # Sinyal işleme döngüsünü ayrı bir task olarak başlat
+    signal_task = asyncio.create_task(signal_processing_loop())
+    
+    # Her iki task'ın da tamamlanmasını bekle (normalde bot kapatılana kadar çalışırlar)
+    await asyncio.gather(bot_polling_task, signal_task)
+    
+    # Uygulama kapatılırken botu durdur
+    await app.stop()
+
 if __name__ == "__main__":
-    # Gerçek zamanlı botu çalıştırmak için:
     asyncio.run(main())

@@ -53,8 +53,39 @@ BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 # İzin verilen kullanıcılar listesi (bot sahibi tarafından yönetilir)
 ALLOWED_USERS = set()
 
+def load_allowed_users():
+    """İzin verilen kullanıcıları dosyadan yükle"""
+    global ALLOWED_USERS
+    try:
+        if os.path.exists(ALLOWED_USERS_FILE):
+            with open(ALLOWED_USERS_FILE, 'r') as f:
+                data = json.load(f)
+                ALLOWED_USERS = set(data.get('allowed_users', []))
+                print(f"✅ {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi")
+        else:
+            print("ℹ️ İzin verilen kullanıcı dosyası bulunamadı, boş liste ile başlatılıyor")
+    except Exception as e:
+        print(f"❌ İzin verilen kullanıcılar yüklenirken hata: {e}")
+        ALLOWED_USERS = set()
+
+def save_allowed_users():
+    """İzin verilen kullanıcıları dosyaya kaydet"""
+    try:
+        data = {
+            'allowed_users': list(ALLOWED_USERS),
+            'last_updated': str(datetime.now())
+        }
+        with open(ALLOWED_USERS_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        print(f"✅ {len(ALLOWED_USERS)} izin verilen kullanıcı kaydedildi")
+    except Exception as e:
+        print(f"❌ İzin verilen kullanıcılar kaydedilirken hata: {e}")
+
 # Bot handler'ları için global değişkenler
 app = None
+
+# İzin verilen kullanıcıları kalıcı olarak saklamak için dosya
+ALLOWED_USERS_FILE = 'allowed_users.json'
 
 # Global değişkenler (main fonksiyonundan erişim için)
 global_stats = {}
@@ -185,8 +216,17 @@ async def adduser_command(update, context):
     
     try:
         new_user_id = int(context.args[0])
+        if new_user_id == BOT_OWNER_ID:
+            await update.message.reply_text("❌ Bot sahibi zaten her zaman erişime sahiptir.")
+            return
+        
+        if new_user_id in ALLOWED_USERS:
+            await update.message.reply_text("❌ Bu kullanıcı zaten izin verilen kullanıcılar listesinde.")
+            return
+        
         ALLOWED_USERS.add(new_user_id)
-        await update.message.reply_text(f"✅ Kullanıcı {new_user_id} başarıyla eklendi.")
+        save_allowed_users()  # Dosyaya kaydet
+        await update.message.reply_text(f"✅ Kullanıcı {new_user_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
     except ValueError:
         await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
 
@@ -208,7 +248,8 @@ async def removeuser_command(update, context):
         remove_user_id = int(context.args[0])
         if remove_user_id in ALLOWED_USERS:
             ALLOWED_USERS.remove(remove_user_id)
-            await update.message.reply_text(f"✅ Kullanıcı {remove_user_id} başarıyla çıkarıldı.")
+            save_allowed_users()  # Dosyaya kaydet
+            await update.message.reply_text(f"✅ Kullanıcı {remove_user_id} başarıyla çıkarıldı ve kalıcı olarak kaydedildi.")
         else:
             await update.message.reply_text(f"❌ Kullanıcı {remove_user_id} zaten izin verilen kullanıcılar listesinde yok.")
     except ValueError:
@@ -1134,6 +1175,9 @@ async def signal_processing_loop():
             await asyncio.sleep(30)
 
 async def main():
+    # İzin verilen kullanıcıları yükle
+    load_allowed_users()
+    
     # Bot'u başlat
     await setup_bot()
     

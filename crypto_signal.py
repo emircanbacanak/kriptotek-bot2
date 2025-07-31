@@ -169,29 +169,26 @@ async def send_signal_to_all_users(message):
     """Sinyali tüm kayıtlı kullanıcılara gönder"""
     sent_chats = set()  # Gönderilen chat'leri takip et
     
-    # Bot sahibine gönder (eğer ALLOWED_USERS'da değilse)
-    if BOT_OWNER_ID and BOT_OWNER_ID not in ALLOWED_USERS:
-        await send_telegram_message(message, BOT_OWNER_ID)
-        sent_chats.add(BOT_OWNER_ID)
-        print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
+    # Ana chat'e gönder (öncelikli)
+    if TELEGRAM_CHAT_ID:
+        await send_telegram_message(message, TELEGRAM_CHAT_ID)
+        sent_chats.add(TELEGRAM_CHAT_ID)
+        print(f"✅ Ana chat'e sinyal gönderildi: {TELEGRAM_CHAT_ID}")
     
-    # İzin verilen kullanıcılara gönder (bot sahibi dahil)
+    # İzin verilen kullanıcılara gönder (ana chat'te olmayanlar)
     for user_id in ALLOWED_USERS:
-        if user_id not in sent_chats:  # Daha önce gönderilmediyse
+        if user_id not in sent_chats:  # Ana chat'te değilse
             try:
                 await send_telegram_message(message, user_id)
-                if user_id == BOT_OWNER_ID:
-                    print(f"✅ Bot sahibine sinyal gönderildi (kullanıcı listesinden): {user_id}")
-                else:
-                    print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
+                print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
                 sent_chats.add(user_id)
             except Exception as e:
                 print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
     
-    # Ana chat'e gönder (eğer daha önce gönderilmediyse)
-    if TELEGRAM_CHAT_ID and TELEGRAM_CHAT_ID not in sent_chats:
-        await send_telegram_message(message, TELEGRAM_CHAT_ID)
-        print(f"✅ Ana chat'e sinyal gönderildi: {TELEGRAM_CHAT_ID}")
+    # Bot sahibine ayrıca gönder (eğer ana chat'te ve ALLOWED_USERS'da değilse)
+    if BOT_OWNER_ID and BOT_OWNER_ID not in sent_chats:
+        await send_telegram_message(message, BOT_OWNER_ID)
+        print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
 
 async def start_command(update, context):
     """Bot başlatma komutu"""

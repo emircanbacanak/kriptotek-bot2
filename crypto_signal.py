@@ -1028,8 +1028,8 @@ async def signal_processing_loop():
                         print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                         continue
                 
-                # Aktif sinyaller için 2 dakika bekle
-                await asyncio.sleep(120)  # 2 dakika
+                # Aktif sinyaller için 1 dakika bekle
+                await asyncio.sleep(60)  # 1 dakika
                 continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
@@ -1037,174 +1037,176 @@ async def signal_processing_loop():
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
             print(f"Takip edilen coin sayısı: {len(symbols)}")
             
-            # 2. Sinyal arama
-            async def process_symbol(symbol):
-                # Eğer pozisyon açıksa, yeni sinyal arama
-                if symbol in positions:
-                    return
-                # Stop sonrası 8 saatlik cooldown kontrolü
-                if symbol in stop_cooldown:
-                    last_stop = stop_cooldown[symbol]
-                    if (datetime.now() - last_stop) < timedelta(hours=8):
-                        return  # 8 saat dolmadıysa sinyal arama
-                    else:
-                        del stop_cooldown[symbol]  # 8 saat dolduysa tekrar sinyal aranabilir
-                # Başarılı sinyal sonrası 8 saatlik cooldown kontrolü
-                for sdict in [successful_signals, failed_signals]:
-                    if symbol in sdict:
-                        last_time = sdict[symbol].get("completion_time")
-                        if last_time:
-                            last_time_dt = datetime.fromisoformat(last_time)
-                            if (datetime.now() - last_time_dt) < timedelta(hours=4):
-                                return  # 4 saat dolmadıysa sinyal arama
-                            else:
-                                del sdict[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
-                # 1d'lik veri kontrolü
-                try:
-                    df_1d = await async_get_historical_data(symbol, timeframes['1d'], 30)
-                    if len(df_1d) < 30:
-                        print(f"UYARI: {symbol} için 1d veri 30'dan az, sinyal aranmıyor.")
+            # Yeni sinyal arama sadece izin verilen saatlerde yapılır
+            if is_signal_search_allowed():
+                # 2. Sinyal arama
+                async def process_symbol(symbol):
+                    # Eğer pozisyon açıksa, yeni sinyal arama
+                    if symbol in positions:
                         return
-                except Exception as e:
-                    print(f"UYARI: {symbol} için 1d veri çekilemedi: {str(e)}")
-                    return
-                # Mevcut sinyalleri al
-                current_signals = dict()
-                for tf_name in tf_names:
-                    try:
-                        df = await async_get_historical_data(symbol, timeframes[tf_name], 200)
-                        df = calculate_full_pine_signals(df, tf_name)
-                        signal = int(df['signal'].iloc[-1])
-                        # Sinyal 0 ise MACD ile düzelt
-                        if signal == 0:
-                            if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
-                                signal = 1
-                            else:
-                                signal = -1
-                        current_signals[tf_name] = signal
-                    except Exception as e:
-                        print(f"Hata: {symbol} - {tf_name} - {str(e)}")
-                        return  # Hata varsa bu coin için sinyal üretme
-                # İlk çalıştırmada sadece sinyalleri kaydet
-                if first_run:
-                    previous_signals[symbol] = current_signals.copy()
-                    print(f"İlk çalıştırma - {symbol} sinyalleri kaydedildi: {current_signals}")
-                    return
-                # İlk çalıştırma değilse, değişiklik kontrolü yap
-                if symbol in previous_signals:
-                    prev_signals = previous_signals[symbol]
-                    signal_changed = False
-                    for tf in tf_names:
-                        if prev_signals[tf] != current_signals[tf]:
-                            signal_changed = True
-                            print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
-                            break
-                    if not signal_changed:
-                        return  # Değişiklik yoksa devam et
-                    # --- SAAT FİLTRESİ ---
-                    # --- 4 ZAMAN DİLİMİ ŞARTI ---
-                    signal_values = [current_signals[tf] for tf in tf_names]
-                    if all(s == 1 for s in signal_values):
-                        sinyal_tipi = 'ALIS'
-                        leverage = 10
-                    elif all(s == -1 for s in signal_values):
-                        sinyal_tipi = 'SATIS'
-                        leverage = 10
-                    else:
-                        previous_signals[symbol] = current_signals.copy()
-                        return
-                    
-                    # Mum kapanışı kontrolü
-                    try:
-                        next_candle_df = await async_get_historical_data(symbol, '2h', 2) # Sadece son 2 mumu çek
-                        if len(next_candle_df) < 2: # En azından 2 mum olmalı (şimdiki ve bir önceki)
-                            print(f"UYARI: {symbol} için mum kapanışı kontrolü için yeterli veri yok.")
-                            previous_signals[symbol] = current_signals.copy()
-                            return
-                        
-                        # Bir önceki mumun kapanışı
-                        prev_candle_close = next_candle_df['close'].iloc[-2]
-                        prev_candle_open = next_candle_df['open'].iloc[-2]
-
-                        # Sinyal onay kontrolü
-                        signal_approved = False
-                        if sinyal_tipi == 'ALIS':
-                            if prev_candle_close > prev_candle_open: # Yeşil mum
-                                signal_approved = True
-                            else:
-                                print(f"{symbol} AL sinyali iptal edildi (mum kapanışı kırmızı). Cooldown yok.")
-                        elif sinyal_tipi == 'SATIS':
-                            if prev_candle_close < prev_candle_open: # Kırmızı mum
-                                signal_approved = True
-                            else:
-                                print(f"{symbol} SAT sinyali iptal edildi (mum kapanışı yeşil). Cooldown yok.")
-                        
-                        if not signal_approved:
-                            previous_signals[symbol] = current_signals.copy()
-                            return # Sinyal onaylanmadı, devam etme
-                    except Exception as e:
-                        print(f"Mum kapanışı kontrol hatası: {symbol} - {str(e)}")
-                        previous_signals[symbol] = current_signals.copy()
-                        return
-
-                    # 4 saatlik cooldown kontrolü (hem başarılı hem başarısız için)
-                    cooldown_key = (symbol, sinyal_tipi)
-                    if cooldown_key in cooldown_signals:
-                        last_time = cooldown_signals[cooldown_key]
-                        if (datetime.now() - last_time) < timedelta(hours=4):
-                            previous_signals[symbol] = current_signals.copy()
-                            return
+                    # Stop sonrası 8 saatlik cooldown kontrolü
+                    if symbol in stop_cooldown:
+                        last_stop = stop_cooldown[symbol]
+                        if (datetime.now() - last_stop) < timedelta(hours=8):
+                            return  # 8 saat dolmadıysa sinyal arama
                         else:
-                            del cooldown_signals[cooldown_key]
-                    # Aynı sinyal daha önce gönderilmiş mi kontrol et
-                    signal_key = (symbol, sinyal_tipi)
-                    if sent_signals.get(signal_key) == signal_values:
-                        previous_signals[symbol] = current_signals.copy()
+                            del stop_cooldown[symbol]  # 8 saat dolduysa tekrar sinyal aranabilir
+                    # Başarılı sinyal sonrası 8 saatlik cooldown kontrolü
+                    for sdict in [successful_signals, failed_signals]:
+                        if symbol in sdict:
+                            last_time = sdict[symbol].get("completion_time")
+                            if last_time:
+                                last_time_dt = datetime.fromisoformat(last_time)
+                                if (datetime.now() - last_time_dt) < timedelta(hours=4):
+                                    return  # 4 saat dolmadıysa sinyal arama
+                                else:
+                                    del sdict[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
+                    # 1d'lik veri kontrolü
+                    try:
+                        df_1d = await async_get_historical_data(symbol, timeframes['1d'], 30)
+                        if len(df_1d) < 30:
+                            print(f"UYARI: {symbol} için 1d veri 30'dan az, sinyal aranmıyor.")
+                            return
+                    except Exception as e:
+                        print(f"UYARI: {symbol} için 1d veri çekilemedi: {str(e)}")
                         return
-                    # Yeni sinyal gönder
-                    sent_signals[signal_key] = signal_values.copy()
-                    # Fiyat ve hacmi çek
-                    df = await async_get_historical_data(symbol, '2h', 2)
-                    price = float(df['close'].iloc[-1])
-                    volume = float(df['volume'].iloc[-1])  # Son mumun hacmini al
-                    message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume)
-                    if message:
-                        print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
-                        await send_signal_to_all_users(message)
-                        # Pozisyonu kaydet
-                        positions[symbol] = {
-                            "type": dominant_signal,
-                            "target": float(target_price),
-                            "stop": float(stop_loss),
-                            "open_price": float(price),
-                            "stop_str": stop_loss_str,
-                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
-                            "leverage": leverage,
-                            "entry_time": str(datetime.now())
-                        }
-                        # Aktif sinyal olarak kaydet
-                        active_signals[symbol] = {
-                            "symbol": symbol,
-                            "type": dominant_signal,
-                            "entry_price": format_price(price, price),
-                            "entry_price_float": price,
-                            "target_price": format_price(target_price, price),
-                            "stop_loss": format_price(stop_loss, price),
-                            "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
-                            "leverage": leverage,
-                            "signal_time": str(datetime.now()),
-                            "current_price": format_price(price, price),
-                            "current_price_float": price,
-                            "last_update": str(datetime.now())
-                        }
-                        stats["total_signals"] += 1
-                        stats["active_signals_count"] = len(active_signals)
-                    previous_signals[symbol] = current_signals.copy()
-                await asyncio.sleep(0)  # Task'ler arası context switch için
+                    # Mevcut sinyalleri al
+                    current_signals = dict()
+                    for tf_name in tf_names:
+                        try:
+                            df = await async_get_historical_data(symbol, timeframes[tf_name], 200)
+                            df = calculate_full_pine_signals(df, tf_name)
+                            signal = int(df['signal'].iloc[-1])
+                            # Sinyal 0 ise MACD ile düzelt
+                            if signal == 0:
+                                if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
+                                    signal = 1
+                                else:
+                                    signal = -1
+                            current_signals[tf_name] = signal
+                        except Exception as e:
+                            print(f"Hata: {symbol} - {tf_name} - {str(e)}")
+                            return  # Hata varsa bu coin için sinyal üretme
+                    # İlk çalıştırmada sadece sinyalleri kaydet
+                    if first_run:
+                        previous_signals[symbol] = current_signals.copy()
+                        print(f"İlk çalıştırma - {symbol} sinyalleri kaydedildi: {current_signals}")
+                        return
+                    # İlk çalıştırma değilse, değişiklik kontrolü yap
+                    if symbol in previous_signals:
+                        prev_signals = previous_signals[symbol]
+                        signal_changed = False
+                        for tf in tf_names:
+                            if prev_signals[tf] != current_signals[tf]:
+                                signal_changed = True
+                                print(f"{symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
+                                break
+                        if not signal_changed:
+                            return  # Değişiklik yoksa devam et
+                        # --- SAAT FİLTRESİ ---
+                        # --- 4 ZAMAN DİLİMİ ŞARTI ---
+                        signal_values = [current_signals[tf] for tf in tf_names]
+                        if all(s == 1 for s in signal_values):
+                            sinyal_tipi = 'ALIS'
+                            leverage = 10
+                        elif all(s == -1 for s in signal_values):
+                            sinyal_tipi = 'SATIS'
+                            leverage = 10
+                        else:
+                            previous_signals[symbol] = current_signals.copy()
+                            return
+                        
+                        # Mum kapanışı kontrolü
+                        try:
+                            next_candle_df = await async_get_historical_data(symbol, '2h', 2) # Sadece son 2 mumu çek
+                            if len(next_candle_df) < 2: # En azından 2 mum olmalı (şimdiki ve bir önceki)
+                                print(f"UYARI: {symbol} için mum kapanışı kontrolü için yeterli veri yok.")
+                                previous_signals[symbol] = current_signals.copy()
+                                return
+                            
+                            # Bir önceki mumun kapanışı
+                            prev_candle_close = next_candle_df['close'].iloc[-2]
+                            prev_candle_open = next_candle_df['open'].iloc[-2]
 
-            # Paralel task listesi oluştur
-            tasks = [process_symbol(symbol) for symbol in symbols]
-            await asyncio.gather(*tasks)
+                            # Sinyal onay kontrolü
+                            signal_approved = False
+                            if sinyal_tipi == 'ALIS':
+                                if prev_candle_close > prev_candle_open: # Yeşil mum
+                                    signal_approved = True
+                                else:
+                                    print(f"{symbol} AL sinyali iptal edildi (mum kapanışı kırmızı). Cooldown yok.")
+                            elif sinyal_tipi == 'SATIS':
+                                if prev_candle_close < prev_candle_open: # Kırmızı mum
+                                    signal_approved = True
+                                else:
+                                    print(f"{symbol} SAT sinyali iptal edildi (mum kapanışı yeşil). Cooldown yok.")
+                            
+                            if not signal_approved:
+                                previous_signals[symbol] = current_signals.copy()
+                                return # Sinyal onaylanmadı, devam etme
+                        except Exception as e:
+                            print(f"Mum kapanışı kontrol hatası: {symbol} - {str(e)}")
+                            previous_signals[symbol] = current_signals.copy()
+                            return
+
+                        # 4 saatlik cooldown kontrolü (hem başarılı hem başarısız için)
+                        cooldown_key = (symbol, sinyal_tipi)
+                        if cooldown_key in cooldown_signals:
+                            last_time = cooldown_signals[cooldown_key]
+                            if (datetime.now() - last_time) < timedelta(hours=4):
+                                previous_signals[symbol] = current_signals.copy()
+                                return
+                            else:
+                                del cooldown_signals[cooldown_key]
+                        # Aynı sinyal daha önce gönderilmiş mi kontrol et
+                        signal_key = (symbol, sinyal_tipi)
+                        if sent_signals.get(signal_key) == signal_values:
+                            previous_signals[symbol] = current_signals.copy()
+                            return
+                        # Yeni sinyal gönder
+                        sent_signals[signal_key] = signal_values.copy()
+                        # Fiyat ve hacmi çek
+                        df = await async_get_historical_data(symbol, '2h', 2)
+                        price = float(df['close'].iloc[-1])
+                        volume = float(df['volume'].iloc[-1])  # Son mumun hacmini al
+                        message, dominant_signal, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume)
+                        if message:
+                            print(f"Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
+                            await send_signal_to_all_users(message)
+                            # Pozisyonu kaydet
+                            positions[symbol] = {
+                                "type": dominant_signal,
+                                "target": float(target_price),
+                                "stop": float(stop_loss),
+                                "open_price": float(price),
+                                "stop_str": stop_loss_str,
+                                "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
+                                "leverage": leverage,
+                                "entry_time": str(datetime.now())
+                            }
+                            # Aktif sinyal olarak kaydet
+                            active_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": dominant_signal,
+                                "entry_price": format_price(price, price),
+                                "entry_price_float": price,
+                                "target_price": format_price(target_price, price),
+                                "stop_loss": format_price(stop_loss, price),
+                                "signals": {k: ("ALIŞ" if v == 1 else "SATIŞ") for k, v in current_signals.items()},
+                                "leverage": leverage,
+                                "signal_time": str(datetime.now()),
+                                "current_price": format_price(price, price),
+                                "current_price_float": price,
+                                "last_update": str(datetime.now())
+                            }
+                            stats["total_signals"] += 1
+                            stats["active_signals_count"] = len(active_signals)
+                        previous_signals[symbol] = current_signals.copy()
+                    await asyncio.sleep(0)  # Task'ler arası context switch için
+
+                # Paralel task listesi oluştur
+                tasks = [process_symbol(symbol) for symbol in symbols]
+                await asyncio.gather(*tasks)
             
             # İlk çalıştırma tamamlandıysa
             if first_run:
@@ -1311,8 +1313,8 @@ async def signal_processing_loop():
             else:
                 print(f"   Başarı Oranı: %0.0")
             # Döngü sonunda bekleme süresi
-            print("Tüm coinler kontrol edildi. 2 dakika bekleniyor...")
-            await asyncio.sleep(120)
+            print("Tüm coinler kontrol edildi. 1 dakika bekleniyor...")
+            await asyncio.sleep(60)
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -1324,7 +1326,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(120)  # 2 dakika
+            await asyncio.sleep(60)  # 1 dakika
 
 async def main():
     # İzin verilen kullanıcıları yükle

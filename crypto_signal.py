@@ -200,6 +200,7 @@ async def start_command(update, context):
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
         return
     
+    # Yasaklı saatlerde de komutlar çalışsın
     await update.message.reply_text("🚀 Kripto Sinyal Botu başlatıldı!\n\nBu bot kripto para sinyallerini takip eder ve size bildirim gönderir.")
 
 async def help_command(update, context):
@@ -222,8 +223,6 @@ async def help_command(update, context):
 /adduser <user_id> - Kullanıcı ekle (sadece bot sahibi)
 /removeuser <user_id> - Kullanıcı çıkar (sadece bot sahibi)
 /listusers - İzin verilen kullanıcıları listele (sadece bot sahibi)
-
-⚠️ **Not:** Bu bot sadece özel sohbetlerde çalışır.
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -247,6 +246,12 @@ async def stats_command(update, context):
         if closed_count > 0:
             success_rate = (stats.get('successful_signals', 0) / closed_count) * 100
         
+        # Yasaklı saatlerde olup olmadığını kontrol et
+        current_time = get_tr_time()
+        is_restricted_hours = not is_signal_search_allowed()
+        status_emoji = "⏸️" if is_restricted_hours else "🟢"
+        status_text = "Yasaklı Saatler (Sinyal Arama Durduruldu)" if is_restricted_hours else "Aktif (Sinyal Arama Çalışıyor)"
+        
         stats_text = f"""📊 **Bot İstatistikleri:**
 
 📈 **Genel Durum:**
@@ -260,7 +265,8 @@ async def stats_command(update, context):
 • Toplam: ${stats.get('total_profit_loss', 0):.2f}
 • Başarı Oranı: %{success_rate:.1f}
 
-🕒 **Son Güncelleme:** {datetime.now().strftime('%H:%M:%S')}"""
+🕒 **Son Güncelleme:** {datetime.now().strftime('%H:%M:%S')}
+{status_emoji} **Bot Durumu:** {status_text}"""
     
     await update.message.reply_text(stats_text, parse_mode='Markdown')
 
@@ -290,6 +296,11 @@ async def active_command(update, context):
 • Sinyal: {signal['signal_time']}
 
 """
+    
+    # Yasaklı saatlerde olup olmadığını kontrol et
+    is_restricted_hours = not is_signal_search_allowed()
+    if is_restricted_hours:
+        active_text += "\n⚠️ **Not:** Şu anda yasaklı saatlerde olduğunuz için yeni sinyal arama durdurulmuştur, ancak mevcut aktif sinyaller takip edilmeye devam etmektedir."
     
     await update.message.reply_text(active_text, parse_mode='Markdown')
 
@@ -381,7 +392,11 @@ async def handle_message(update, context):
 async def error_handler(update, context):
     """Hata handler'ı"""
     error = context.error
-    print(f"Bot hatası: {error}")
+    
+    # CancelledError'ları görmezden gel (bot kapatılırken normal)
+    if isinstance(error, asyncio.CancelledError):
+        print("ℹ️ Bot kapatılırken task iptal edildi (normal durum)")
+        return
     
     # Conflict hatası için özel işlem
     if "Conflict" in str(error) and "getUpdates" in str(error):
@@ -403,6 +418,9 @@ async def error_handler(update, context):
         except Exception as e:
             print(f"❌ Bot yeniden başlatma hatası: {e}")
         return
+    
+    # Diğer hataları logla
+    print(f"Bot hatası: {error}")
     
     if update and update.effective_chat:
         if update.effective_chat.type == "private":
@@ -818,7 +836,9 @@ async def signal_processing_loop():
         try:
             # Mevcut saati kontrol et
             if not is_signal_search_allowed():
-                print(f"Şu an saat {datetime.now().hour}:{datetime.now().minute} - Sinyal arama durduruldu (01:00-08:00 ve 13:00-17:00 arası)")
+                current_time = get_tr_time()
+                print(f"⏸️ Şu an saat {current_time.strftime('%H:%M')} - Sinyal arama durduruldu (01:00-08:00 ve 13:00-17:00 arası)")
+                print(f"ℹ️ Bot komutları (/start, /help, /stats, /active, /adduser, /removeuser, /listusers) her zaman kullanılabilir")
                 # Aktif pozisyonları kontrol etmeye devam et
                 for symbol, pos in list(positions.items()):
                     try:
@@ -1335,19 +1355,52 @@ async def main():
     except Exception as e:
         print(f"⚠️ Polling öncesi webhook temizleme hatası: {e}")
     
-    # Telegram bot polling'i devre dışı bırak (conflict hatası nedeniyle)
-    print("⚠️ Telegram bot polling devre dışı bırakıldı (conflict hatası nedeniyle)")
-    print("📊 Bot sadece sinyal işleme modunda çalışacak")
+    # Telegram bot polling'i başlat
+    print("🤖 Telegram bot polling başlatılıyor...")
     
-    # Sadece sinyal işleme döngüsünü başlat
+    # Bot polling'i başlat
+    try:
+        await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+        print("✅ Telegram bot polling başarıyla başlatıldı")
+    except Exception as e:
+        print(f"❌ Telegram bot polling başlatma hatası: {e}")
+        print("⚠️ Bot sadece sinyal işleme modunda çalışacak")
+    
+    # Sinyal işleme döngüsünü başlat
     signal_task = asyncio.create_task(signal_processing_loop())
     
     try:
-        # Sadece sinyal task'ının tamamlanmasını bekle
+        # Sinyal işleme döngüsünü çalıştır (bot polling arka planda çalışacak)
+        print("🚀 Bot başarıyla başlatıldı! Telegram komutları kullanılabilir.")
         await signal_task
     except KeyboardInterrupt:
         print("\n⚠️ Bot kapatılıyor...")
+    except asyncio.CancelledError:
+        print("\nℹ️ Bot task'ları iptal edildi (normal kapatma)")
     finally:
+        # Sinyal task'ını iptal et
+        if not signal_task.done():
+            signal_task.cancel()
+            try:
+                await signal_task
+            except asyncio.CancelledError:
+                print("ℹ️ Sinyal task'ı iptal edildi")
+        
+        # Bot polling'i durdur
+        try:
+            await app.updater.stop()
+            print("✅ Telegram bot polling durduruldu")
+        except Exception as e:
+            print(f"⚠️ Bot polling durdurma hatası: {e}")
+        
+        # Uygulamayı kapat
+        try:
+            await app.stop()
+            await app.shutdown()
+            print("✅ Telegram uygulaması kapatıldı")
+        except Exception as e:
+            print(f"⚠️ Uygulama kapatma hatası: {e}")
+        
         # Uygulama kapatılırken MongoDB'yi kapat
         close_mongodb()
         print("✅ MongoDB bağlantısı kapatıldı")

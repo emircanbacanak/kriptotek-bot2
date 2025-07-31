@@ -485,7 +485,7 @@ def is_signal_search_allowed():
     now = get_tr_time()
     current_hour = now.hour
     # Yasaklı saat aralıkları: 01:00-08:00 ve 13:00-17:00
-    if (2 <= current_hour < 7) or (14 <= current_hour < 16):
+    if (1 <= current_hour < 8) or (13 <= current_hour < 17):
         return False
     return True
 
@@ -732,7 +732,7 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 
     return df
 
-async def get_active_high_volume_usdt_pairs(top_n=50):
+async def get_active_high_volume_usdt_pairs(top_n=40):
     """
     Sadece spotta aktif, USDT bazlı coinlerden hacme göre sıralanmış ilk top_n kadar uygun coin döndürür.
     1 günlük verisi 30 mumdan az olan coin'ler elenir.
@@ -1009,8 +1009,8 @@ async def signal_processing_loop():
                         print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                         continue
                 
-                # Aktif sinyaller için 30 dakika bekle
-                await asyncio.sleep(600)  # 10 dakika
+                # Aktif sinyaller için 2 dakika bekle
+                await asyncio.sleep(120)  # 2 dakika
                 continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
@@ -1292,8 +1292,8 @@ async def signal_processing_loop():
             else:
                 print(f"   Başarı Oranı: %0.0")
             # Döngü sonunda bekleme süresi
-            print("Tüm coinler kontrol edildi. 10 dakika bekleniyor...")
-            await asyncio.sleep(600)
+            print("Tüm coinler kontrol edildi. 2 dakika bekleniyor...")
+            await asyncio.sleep(120)
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -1305,7 +1305,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(600)  # 10 dakika
+            await asyncio.sleep(120)  # 2 dakika
 
 async def main():
     # İzin verilen kullanıcıları yükle

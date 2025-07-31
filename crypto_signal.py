@@ -172,23 +172,25 @@ async def send_signal_to_all_users(message):
     # Ana chat'e gönder (öncelikli)
     if TELEGRAM_CHAT_ID:
         await send_telegram_message(message, TELEGRAM_CHAT_ID)
-        sent_chats.add(TELEGRAM_CHAT_ID)
+        sent_chats.add(str(TELEGRAM_CHAT_ID))
         print(f"✅ Ana chat'e sinyal gönderildi: {TELEGRAM_CHAT_ID}")
     
     # İzin verilen kullanıcılara gönder (ana chat'te olmayanlar)
     for user_id in ALLOWED_USERS:
-        if user_id not in sent_chats:  # Ana chat'te değilse
+        if str(user_id) not in sent_chats:  # Ana chat'te değilse
             try:
                 await send_telegram_message(message, user_id)
                 print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
-                sent_chats.add(user_id)
+                sent_chats.add(str(user_id))
             except Exception as e:
                 print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
     
     # Bot sahibine ayrıca gönder (eğer ana chat'te ve ALLOWED_USERS'da değilse)
-    if BOT_OWNER_ID and BOT_OWNER_ID not in sent_chats:
+    if BOT_OWNER_ID and str(BOT_OWNER_ID) not in sent_chats:
         await send_telegram_message(message, BOT_OWNER_ID)
         print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
+    elif BOT_OWNER_ID and str(BOT_OWNER_ID) in sent_chats:
+        print(f"ℹ️ Bot sahibi zaten mesaj aldı (chat_id: {BOT_OWNER_ID})")
 
 async def start_command(update, context):
     """Bot başlatma komutu"""

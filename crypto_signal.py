@@ -513,7 +513,7 @@ async def error_handler(update, context):
             # Polling'i yeniden başlat
             await app.updater.stop()
             await asyncio.sleep(2)
-            await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "my_chat_member", "chat_member"])
+            await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "chat_member"])
             print("✅ Bot yeniden başlatıldı")
             
         except Exception as e:
@@ -591,12 +591,21 @@ async def handle_chat_member_update(update, context):
                 chat_type = "kanalından" if chat.type == "channel" else "grubundan"
                 print(f"Bot {chat.title} {chat_type} çıkarıldı.")
 
-async def handle_my_chat_member_update(update, context):
-    """Bot'un kendisinin eklenme/çıkarılma olaylarını dinler (kanallar için)"""
+async def handle_chat_member_updated(update, context):
+    """ChatMemberUpdated event'ini dinler (hem gruplar hem kanallar için)"""
+    if not update.chat_member:
+        return
+    
     chat = update.effective_chat
     user_id = update.effective_user.id
+    new_status = update.chat_member.new_chat_member.status
+    old_status = update.chat_member.old_chat_member.status
     
-    print(f"🔍 Bot chat member update: chat_type={chat.type}, user_id={user_id}, BOT_OWNER_ID={BOT_OWNER_ID}")
+    print(f"🔍 ChatMemberUpdated: chat_type={chat.type}, user_id={user_id}, old_status={old_status}, new_status={new_status}")
+    
+    # Sadece bot'un kendisinin durumu değiştiyse işlem yap
+    if update.chat_member.new_chat_member.user.id != context.bot.id:
+        return
     
     # Bot sahibi tarafından mı işlem yapıldı?
     if user_id != BOT_OWNER_ID:
@@ -615,7 +624,7 @@ async def handle_my_chat_member_update(update, context):
         return
     
     # Bot sahibi tarafından işlem yapıldı
-    if update.my_chat_member.new_chat_member.status in ['member', 'administrator']:
+    if new_status in ['member', 'administrator'] and old_status == 'left':
         # Bot eklendi
         BOT_OWNER_GROUPS.add(chat.id)
         chat_type = "kanalına" if chat.type == "channel" else "grubuna"
@@ -629,7 +638,7 @@ async def handle_my_chat_member_update(update, context):
         success_msg = f"✅ **Bot {chat_type.title()} Ekleme Başarılı**\n\nBot '{chat.title}' {chat_type} başarıyla eklendi.\n\nChat ID: {chat.id}\nBot artık bu {chat_type.replace('na', 'da')} çalışabilir."
         await send_telegram_message(success_msg)
         
-    elif update.my_chat_member.new_chat_member.status == 'left':
+    elif new_status == 'left' and old_status in ['member', 'administrator']:
         # Bot çıkarıldı
         if chat.id in BOT_OWNER_GROUPS:
             BOT_OWNER_GROUPS.remove(chat.id)
@@ -674,8 +683,8 @@ async def setup_bot():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_chat_member_update))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_chat_member_update))
     
-    # Bot'un kendisinin eklenme/çıkarılma olaylarını dinle (kanallar için)
-    app.add_handler(MessageHandler(filters.StatusUpdate.MY_CHAT_MEMBER, handle_my_chat_member_update))
+    # ChatMemberUpdated event'ini dinle (hem gruplar hem kanallar için)
+    app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_MEMBER, handle_chat_member_updated))
     
     # Hata handler'ı
     app.add_error_handler(error_handler)
@@ -1512,7 +1521,7 @@ async def main():
     
     # Bot polling'i başlat
     try:
-        await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "my_chat_member", "chat_member"])
+        await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "chat_member"])
         print("✅ Telegram bot polling başarıyla başlatıldı")
     except Exception as e:
         print(f"❌ Telegram bot polling başlatma hatası: {e}")

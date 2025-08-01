@@ -284,11 +284,12 @@ async def help_command(update, context):
 
 /start - Botu başlat
 /help - Bu yardım mesajını göster
-/stats - İstatistikleri göster
+/stats - İstatistikleri göster (sadece bot sahibi)
 /active - Aktif sinyalleri göster
 /adduser <user_id> - Kullanıcı ekle (sadece bot sahibi)
 /removeuser <user_id> - Kullanıcı çıkar (sadece bot sahibi)
 /listusers - İzin verilen kullanıcıları listele (sadece bot sahibi)
+/addchannel - Kanalı bot listesine ekle (sadece kanallarda, bot sahibi)
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -298,7 +299,7 @@ async def stats_command(update, context):
     
     # Sadece bot sahibi kullanabilir
     if user_id != BOT_OWNER_ID:
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        # Bot sahibi değilse hiçbir şey yapma, sessizce çık
         return
     
     # Global istatistikleri kullan
@@ -448,6 +449,36 @@ async def listusers_command(update, context):
     
     await update.message.reply_text(users_text, parse_mode='Markdown')
 
+async def addchannel_command(update, context):
+    """Kanal ekleme komutu (sadece bot sahibi)"""
+    user_id = update.effective_user.id
+    
+    # Sadece bot sahibi kullanabilir
+    if user_id != BOT_OWNER_ID:
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
+    
+    chat = update.effective_chat
+    
+    # Sadece kanallarda çalışır
+    if chat.type != "channel":
+        await update.message.reply_text("❌ Bu komut sadece kanallarda kullanılabilir.")
+        return
+    
+    # Kanalı admin gruplarına ekle
+    BOT_OWNER_GROUPS.add(chat.id)
+    print(f"✅ Bot sahibi tarafından {chat.title} kanalına eklendi. Chat ID: {chat.id}")
+    print(f"🔍 BOT_OWNER_GROUPS güncellendi: {BOT_OWNER_GROUPS}")
+    
+    # MongoDB'ye kaydet
+    save_admin_groups()
+    
+    # Bot sahibine bildirim gönder
+    success_msg = f"✅ **Bot Kanal Ekleme Başarılı**\n\nBot '{chat.title}' kanalına başarıyla eklendi.\n\nChat ID: {chat.id}\nBot artık bu kanalda çalışabilir."
+    await send_telegram_message(success_msg)
+    
+    await update.message.reply_text(f"✅ Kanal başarıyla eklendi!\n\nKanal: {chat.title}\nID: {chat.id}")
+
 async def handle_message(update, context):
     """Genel mesaj handler'ı"""
     if not should_respond_to_message(update):
@@ -482,7 +513,7 @@ async def error_handler(update, context):
             # Polling'i yeniden başlat
             await app.updater.stop()
             await asyncio.sleep(2)
-            await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+            await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "my_chat_member", "chat_member"])
             print("✅ Bot yeniden başlatıldı")
             
         except Exception as e:
@@ -499,7 +530,7 @@ async def error_handler(update, context):
                 await update.message.reply_text("❌ Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
 
 async def handle_chat_member_update(update, context):
-    """Grup ekleme/çıkarma olaylarını dinler"""
+    """Grup ve kanal ekleme/çıkarma olaylarını dinler"""
     chat = update.effective_chat
     
     # Yeni üye eklenme durumu
@@ -510,18 +541,21 @@ async def handle_chat_member_update(update, context):
                 # Bot sahibi tarafından mı eklendi?
                 user_id = update.effective_user.id
                 
+                print(f"🔍 Bot ekleme: chat_type={chat.type}, user_id={user_id}, BOT_OWNER_ID={BOT_OWNER_ID}")
+                
                 if user_id != BOT_OWNER_ID:
-                    # Bot sahibi olmayan biri ekledi, gruptan çık
+                    # Bot sahibi olmayan biri ekledi, gruptan/kanaldan çık
                     try:
                         await context.bot.leave_chat(chat.id)
-                        print(f"❌ Bot sahibi olmayan {user_id} tarafından {chat.title} grubuna eklenmeye çalışıldı. Bot gruptan çıktı.")
+                        chat_type = "kanalından" if chat.type == "channel" else "grubundan"
+                        print(f"❌ Bot sahibi olmayan {user_id} tarafından {chat.title} {chat_type.replace('ndan', 'na')} eklenmeye çalışıldı. Bot {chat_type} çıktı.")
                         
                         # Bot sahibine bildirim gönder
-                        warning_msg = f"⚠️ **GÜVENLİK UYARISI** ⚠️\n\nBot sahibi olmayan bir kullanıcı ({user_id}) bot'u '{chat.title}' grubuna eklemeye çalıştı.\n\nBot otomatik olarak gruptan çıktı.\n\nGrup ID: {chat.id}"
+                        warning_msg = f"⚠️ **GÜVENLİK UYARISI** ⚠️\n\nBot sahibi olmayan bir kullanıcı ({user_id}) bot'u '{chat.title}' {chat_type.replace('ndan', 'na')} eklemeye çalıştı.\n\nBot otomatik olarak {chat_type} çıktı.\n\nChat ID: {chat.id}"
                         await send_telegram_message(warning_msg)
                         
                     except Exception as e:
-                        print(f"Gruptan çıkma hatası: {e}")
+                        print(f"Gruptan/kanaldan çıkma hatası: {e}")
                 else:
                     # Bot sahibi tarafından eklendi, grubu/kanalı izin verilen gruplara ekle
                     BOT_OWNER_GROUPS.add(chat.id)
@@ -557,6 +591,61 @@ async def handle_chat_member_update(update, context):
                 chat_type = "kanalından" if chat.type == "channel" else "grubundan"
                 print(f"Bot {chat.title} {chat_type} çıkarıldı.")
 
+async def handle_my_chat_member_update(update, context):
+    """Bot'un kendisinin eklenme/çıkarılma olaylarını dinler (kanallar için)"""
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    print(f"🔍 Bot chat member update: chat_type={chat.type}, user_id={user_id}, BOT_OWNER_ID={BOT_OWNER_ID}")
+    
+    # Bot sahibi tarafından mı işlem yapıldı?
+    if user_id != BOT_OWNER_ID:
+        # Bot sahibi olmayan biri ekledi/çıkardı, gruptan/kanaldan çık
+        try:
+            await context.bot.leave_chat(chat.id)
+            chat_type = "kanalından" if chat.type == "channel" else "grubundan"
+            print(f"❌ Bot sahibi olmayan {user_id} tarafından {chat.title} {chat_type.replace('ndan', 'na')} eklenmeye çalışıldı. Bot {chat_type} çıktı.")
+            
+            # Bot sahibine bildirim gönder
+            warning_msg = f"⚠️ **GÜVENLİK UYARISI** ⚠️\n\nBot sahibi olmayan bir kullanıcı ({user_id}) bot'u '{chat.title}' {chat_type.replace('ndan', 'na')} eklemeye çalıştı.\n\nBot otomatik olarak {chat_type} çıktı.\n\nChat ID: {chat.id}"
+            await send_telegram_message(warning_msg)
+            
+        except Exception as e:
+            print(f"Gruptan/kanaldan çıkma hatası: {e}")
+        return
+    
+    # Bot sahibi tarafından işlem yapıldı
+    if update.my_chat_member.new_chat_member.status in ['member', 'administrator']:
+        # Bot eklendi
+        BOT_OWNER_GROUPS.add(chat.id)
+        chat_type = "kanalına" if chat.type == "channel" else "grubuna"
+        print(f"✅ Bot sahibi tarafından {chat.title} {chat_type} eklendi. Chat ID: {chat.id}")
+        print(f"🔍 BOT_OWNER_GROUPS güncellendi: {BOT_OWNER_GROUPS}")
+        
+        # MongoDB'ye kaydet
+        save_admin_groups()
+        
+        # Bot sahibine bildirim gönder
+        success_msg = f"✅ **Bot {chat_type.title()} Ekleme Başarılı**\n\nBot '{chat.title}' {chat_type} başarıyla eklendi.\n\nChat ID: {chat.id}\nBot artık bu {chat_type.replace('na', 'da')} çalışabilir."
+        await send_telegram_message(success_msg)
+        
+    elif update.my_chat_member.new_chat_member.status == 'left':
+        # Bot çıkarıldı
+        if chat.id in BOT_OWNER_GROUPS:
+            BOT_OWNER_GROUPS.remove(chat.id)
+            chat_type = "kanalından" if chat.type == "channel" else "grubundan"
+            print(f"Bot {chat.title} {chat_type} çıkarıldı. Chat ID: {chat.id} izin verilen gruplardan kaldırıldı.")
+            
+            # MongoDB'ye kaydet
+            save_admin_groups()
+            
+            # Bot sahibine bildirim gönder
+            leave_msg = f"ℹ️ **Bot {chat_type.title()} Çıkışı**\n\nBot '{chat.title}' {chat_type} çıkarıldı.\n\nChat ID: {chat.id}\nBu {chat_type.replace('ndan', '')} artık izin verilen gruplar listesinde değil."
+            await send_telegram_message(leave_msg)
+        else:
+            chat_type = "kanalından" if chat.type == "channel" else "grubundan"
+            print(f"Bot {chat.title} {chat_type} çıkarıldı.")
+
 async def setup_bot():
     """Bot handler'larını kur"""
     global app
@@ -584,6 +673,9 @@ async def setup_bot():
     # Grup ekleme/çıkarma handler'ı - ChatMemberUpdated event'ini dinle
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_chat_member_update))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_chat_member_update))
+    
+    # Bot'un kendisinin eklenme/çıkarılma olaylarını dinle (kanallar için)
+    app.add_handler(MessageHandler(filters.StatusUpdate.MY_CHAT_MEMBER, handle_my_chat_member_update))
     
     # Hata handler'ı
     app.add_error_handler(error_handler)
@@ -1420,7 +1512,7 @@ async def main():
     
     # Bot polling'i başlat
     try:
-        await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+        await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "my_chat_member", "chat_member"])
         print("✅ Telegram bot polling başarıyla başlatıldı")
     except Exception as e:
         print(f"❌ Telegram bot polling başlatma hatası: {e}")

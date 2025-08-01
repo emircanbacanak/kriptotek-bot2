@@ -84,12 +84,13 @@ def connect_mongodb():
         return False
 
 def load_allowed_users():
-    """İzin verilen kullanıcıları MongoDB'den yükle"""
-    global ALLOWED_USERS
+    """İzin verilen kullanıcıları ve admin bilgilerini MongoDB'den yükle"""
+    global ALLOWED_USERS, BOT_OWNER_GROUPS
     try:
         if not connect_mongodb():
             print("⚠️ MongoDB bağlantısı kurulamadı, boş liste ile başlatılıyor")
             ALLOWED_USERS = set()
+            BOT_OWNER_GROUPS = set()
             return
         
         # MongoDB'den kullanıcıları çek
@@ -101,12 +102,23 @@ def load_allowed_users():
             else:
                 print("ℹ️ MongoDB'de izin verilen kullanıcı bulunamadı, boş liste ile başlatılıyor")
                 ALLOWED_USERS = set()
+            
+            # Admin gruplarını çek
+            admin_doc = mongo_collection.find_one({"_id": "admin_groups"})
+            if admin_doc:
+                BOT_OWNER_GROUPS = set(admin_doc.get('group_ids', []))
+                print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} admin grubu yüklendi")
+            else:
+                print("ℹ️ MongoDB'de admin grubu bulunamadı, boş liste ile başlatılıyor")
+                BOT_OWNER_GROUPS = set()
         else:
             print("⚠️ MongoDB collection bulunamadı, boş liste ile başlatılıyor")
             ALLOWED_USERS = set()
+            BOT_OWNER_GROUPS = set()
     except Exception as e:
-        print(f"❌ MongoDB'den kullanıcılar yüklenirken hata: {e}")
+        print(f"❌ MongoDB'den veriler yüklenirken hata: {e}")
         ALLOWED_USERS = set()
+        BOT_OWNER_GROUPS = set()
 
 def save_allowed_users():
     """İzin verilen kullanıcıları MongoDB'ye kaydet"""
@@ -131,6 +143,30 @@ def save_allowed_users():
         print(f"✅ MongoDB'ye {len(ALLOWED_USERS)} izin verilen kullanıcı kaydedildi")
     except Exception as e:
         print(f"❌ MongoDB'ye kullanıcılar kaydedilirken hata: {e}")
+
+def save_admin_groups():
+    """Admin gruplarını MongoDB'ye kaydet"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, admin grupları kaydedilemedi")
+                return
+        
+        # Upsert ile kaydet (varsa güncelle, yoksa ekle)
+        mongo_collection.update_one(
+            {"_id": "admin_groups"},
+            {
+                "$set": {
+                    "group_ids": list(BOT_OWNER_GROUPS),
+                    "last_updated": str(datetime.now()),
+                    "count": len(BOT_OWNER_GROUPS)
+                }
+            },
+            upsert=True
+        )
+        print(f"✅ MongoDB'ye {len(BOT_OWNER_GROUPS)} admin grubu kaydedildi")
+    except Exception as e:
+        print(f"❌ MongoDB'ye admin grupları kaydedilirken hata: {e}")
 
 def close_mongodb():
     """MongoDB bağlantısını kapat"""
@@ -225,17 +261,10 @@ async def send_signal_to_all_users(message):
 
 async def start_command(update, context):
     """Bot başlatma komutu"""
-    # Debug için bot sahibi ID'sini kontrol et
-    user_id = update.effective_user.id
-    chat_type = update.effective_chat.type
-    print(f"🔍 Start komutu: user_id={user_id}, chat_type={chat_type}, BOT_OWNER_ID={BOT_OWNER_ID}")
-    
     if not should_respond_to_message(update):
-        print(f"❌ should_respond_to_message=False için user_id={user_id}")
         return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
     
     if not is_authorized_chat(update):
-        print(f"❌ is_authorized_chat=False için user_id={user_id}")
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
         return
     
@@ -265,14 +294,9 @@ async def help_command(update, context):
 
 async def stats_command(update, context):
     """İstatistik komutu (sadece bot sahibi)"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
     user_id = update.effective_user.id
+    
+    # Sadece bot sahibi kullanabilir
     if user_id != BOT_OWNER_ID:
         await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
         return
@@ -505,6 +529,9 @@ async def handle_chat_member_update(update, context):
                     print(f"✅ Bot sahibi tarafından {chat.title} {chat_type} eklendi. Chat ID: {chat.id}")
                     print(f"🔍 BOT_OWNER_GROUPS güncellendi: {BOT_OWNER_GROUPS}")
                     
+                    # MongoDB'ye kaydet
+                    save_admin_groups()
+                    
                     # Bot sahibine bildirim gönder
                     success_msg = f"✅ **Bot {chat_type.title()} Ekleme Başarılı**\n\nBot '{chat.title}' {chat_type} başarıyla eklendi.\n\nChat ID: {chat.id}\nBot artık bu {chat_type.replace('na', 'da')} çalışabilir."
                     await send_telegram_message(success_msg)
@@ -519,6 +546,9 @@ async def handle_chat_member_update(update, context):
                 BOT_OWNER_GROUPS.remove(chat.id)
                 chat_type = "kanalından" if chat.type == "channel" else "grubundan"
                 print(f"Bot {chat.title} {chat_type} çıkarıldı. Chat ID: {chat.id} izin verilen gruplardan kaldırıldı.")
+                
+                # MongoDB'ye kaydet
+                save_admin_groups()
                 
                 # Bot sahibine bildirim gönder
                 leave_msg = f"ℹ️ **Bot {chat_type.title()} Çıkışı**\n\nBot '{chat.title}' {chat_type} çıkarıldı.\n\nChat ID: {chat.id}\nBu {chat_type.replace('ndan', '')} artık izin verilen gruplar listesinde değil."
@@ -1355,7 +1385,7 @@ async def signal_processing_loop():
             await asyncio.sleep(60)  # 1 dakika
 
 async def main():
-    # İzin verilen kullanıcıları yükle
+    # İzin verilen kullanıcıları ve admin gruplarını yükle
     load_allowed_users()
     
     # Bot'u başlat

@@ -174,24 +174,14 @@ def should_respond_to_message(update):
     chat = update.effective_chat
     user_id = update.effective_user.id
     
-    # Debug için log ekle
-    print(f"🔍 should_respond_to_message: chat_type={chat.type}, chat_id={chat.id}, user_id={user_id}")
-    print(f"🔍 BOT_OWNER_GROUPS: {BOT_OWNER_GROUPS}")
-    print(f"🔍 BOT_OWNER_ID: {BOT_OWNER_ID}")
-    
     # Özel sohbet ve yetkili kullanıcı
     if chat.type == "private":
-        result = user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS
-        print(f"🔍 Private chat result: {result}")
-        return result
+        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS
     
     # Bot sahibinin eklediği grup/kanal ve sadece bot sahibi
     if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
-        result = user_id == BOT_OWNER_ID
-        print(f"🔍 Group/Channel chat result: {result}")
-        return result
+        return user_id == BOT_OWNER_ID
     
-    print(f"🔍 No match, returning False")
     return False
 
 async def send_telegram_message(message, chat_id=None):
@@ -235,10 +225,17 @@ async def send_signal_to_all_users(message):
 
 async def start_command(update, context):
     """Bot başlatma komutu"""
+    # Debug için bot sahibi ID'sini kontrol et
+    user_id = update.effective_user.id
+    chat_type = update.effective_chat.type
+    print(f"🔍 Start komutu: user_id={user_id}, chat_type={chat_type}, BOT_OWNER_ID={BOT_OWNER_ID}")
+    
     if not should_respond_to_message(update):
+        print(f"❌ should_respond_to_message=False için user_id={user_id}")
         return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
     
     if not is_authorized_chat(update):
+        print(f"❌ is_authorized_chat=False için user_id={user_id}")
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
         return
     

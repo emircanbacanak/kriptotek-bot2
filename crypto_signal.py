@@ -152,6 +152,47 @@ global_stats = {}
 global_active_signals = {}
 global_successful_signals = {}
 global_failed_signals = {}
+BOT_OWNER_GROUPS = set()  # Bot sahibinin eklediği gruplar
+
+def is_authorized_chat(update):
+    """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # Özel sohbet ve yetkili kullanıcı
+    if chat.type == "private":
+        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS
+    
+    # Bot sahibinin eklediği grup/kanal ve bot sahibi
+    if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
+        return user_id == BOT_OWNER_ID
+    
+    return False
+
+def should_respond_to_message(update):
+    """Mesaja yanıt verilmeli mi kontrol et (gruplarda ve kanallarda sadece bot sahibi)"""
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # Debug için log ekle
+    print(f"🔍 should_respond_to_message: chat_type={chat.type}, chat_id={chat.id}, user_id={user_id}")
+    print(f"🔍 BOT_OWNER_GROUPS: {BOT_OWNER_GROUPS}")
+    print(f"🔍 BOT_OWNER_ID: {BOT_OWNER_ID}")
+    
+    # Özel sohbet ve yetkili kullanıcı
+    if chat.type == "private":
+        result = user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS
+        print(f"🔍 Private chat result: {result}")
+        return result
+    
+    # Bot sahibinin eklediği grup/kanal ve sadece bot sahibi
+    if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
+        result = user_id == BOT_OWNER_ID
+        print(f"🔍 Group/Channel chat result: {result}")
+        return result
+    
+    print(f"🔍 No match, returning False")
+    return False
 
 async def send_telegram_message(message, chat_id=None):
     """Telegram'a mesaj gönder"""
@@ -194,11 +235,10 @@ async def send_signal_to_all_users(message):
 
 async def start_command(update, context):
     """Bot başlatma komutu"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
     
-    user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+    if not is_authorized_chat(update):
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
         return
     
@@ -207,11 +247,10 @@ async def start_command(update, context):
 
 async def help_command(update, context):
     """Yardım komutu"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
     
-    user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+    if not is_authorized_chat(update):
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
         return
     
@@ -229,13 +268,17 @@ async def help_command(update, context):
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def stats_command(update, context):
-    """İstatistik komutu"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    """İstatistik komutu (sadece bot sahibi)"""
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
+    
+    if not is_authorized_chat(update):
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
     
     user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
-        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
+    if user_id != BOT_OWNER_ID:
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
         return
     
     # Global istatistikleri kullan
@@ -272,11 +315,10 @@ async def stats_command(update, context):
 
 async def active_command(update, context):
     """Aktif sinyaller komutu"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
     
-    user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+    if not is_authorized_chat(update):
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
         return
     
@@ -303,8 +345,12 @@ async def active_command(update, context):
 
 async def adduser_command(update, context):
     """Kullanıcı ekleme komutu (sadece bot sahibi)"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
+    
+    if not is_authorized_chat(update):
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
     
     user_id = update.effective_user.id
     if user_id != BOT_OWNER_ID:
@@ -333,8 +379,12 @@ async def adduser_command(update, context):
 
 async def removeuser_command(update, context):
     """Kullanıcı çıkarma komutu (sadece bot sahibi)"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
+    
+    if not is_authorized_chat(update):
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
     
     user_id = update.effective_user.id
     if user_id != BOT_OWNER_ID:
@@ -358,8 +408,12 @@ async def removeuser_command(update, context):
 
 async def listusers_command(update, context):
     """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi)"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
+    
+    if not is_authorized_chat(update):
+        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
+        return
     
     user_id = update.effective_user.id
     if user_id != BOT_OWNER_ID:
@@ -376,11 +430,10 @@ async def listusers_command(update, context):
 
 async def handle_message(update, context):
     """Genel mesaj handler'ı"""
-    if update.effective_chat.type != "private":
-        return  # Sadece özel sohbetlerde çalışsın, grupsa hiçbir şey yapma
+    if not should_respond_to_message(update):
+        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
     
-    user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+    if not is_authorized_chat(update):
         await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
         return
     
@@ -450,14 +503,33 @@ async def handle_chat_member_update(update, context):
                     except Exception as e:
                         print(f"Gruptan çıkma hatası: {e}")
                 else:
-                    print(f"✅ Bot sahibi tarafından {chat.title} grubuna eklendi.")
+                    # Bot sahibi tarafından eklendi, grubu/kanalı izin verilen gruplara ekle
+                    BOT_OWNER_GROUPS.add(chat.id)
+                    chat_type = "kanalına" if chat.type == "channel" else "grubuna"
+                    print(f"✅ Bot sahibi tarafından {chat.title} {chat_type} eklendi. Chat ID: {chat.id}")
+                    print(f"🔍 BOT_OWNER_GROUPS güncellendi: {BOT_OWNER_GROUPS}")
+                    
+                    # Bot sahibine bildirim gönder
+                    success_msg = f"✅ **Bot {chat_type.title()} Ekleme Başarılı**\n\nBot '{chat.title}' {chat_type} başarıyla eklendi.\n\nChat ID: {chat.id}\nBot artık bu {chat_type.replace('na', 'da')} çalışabilir."
+                    await send_telegram_message(success_msg)
     
     # Üye çıkma durumu
     elif update.message and update.message.left_chat_member:
         left_member = update.message.left_chat_member
         # Bot'un kendisi çıkarılmış mı?
         if left_member.id == context.bot.id:
-            print(f"Bot {chat.title} grubundan çıkarıldı.")
+            # Gruptan/kanaldan çıkarıldıysa, izin verilen gruplardan da çıkar
+            if chat.id in BOT_OWNER_GROUPS:
+                BOT_OWNER_GROUPS.remove(chat.id)
+                chat_type = "kanalından" if chat.type == "channel" else "grubundan"
+                print(f"Bot {chat.title} {chat_type} çıkarıldı. Chat ID: {chat.id} izin verilen gruplardan kaldırıldı.")
+                
+                # Bot sahibine bildirim gönder
+                leave_msg = f"ℹ️ **Bot {chat_type.title()} Çıkışı**\n\nBot '{chat.title}' {chat_type} çıkarıldı.\n\nChat ID: {chat.id}\nBu {chat_type.replace('ndan', '')} artık izin verilen gruplar listesinde değil."
+                await send_telegram_message(leave_msg)
+            else:
+                chat_type = "kanalından" if chat.type == "channel" else "grubundan"
+                print(f"Bot {chat.title} {chat_type} çıkarıldı.")
 
 async def setup_bot():
     """Bot handler'larını kur"""
@@ -1257,16 +1329,6 @@ async def main():
     
     # Bot'u başlat
     await setup_bot()
-    
-    # Test mesajı gönder
-    print("📱 Test mesajı gönderiliyor...")
-    test_signals = {'4h': 1, '1d': 1}  # ALIŞ sinyali
-    test_message, _, _, _, _ = create_signal_message("BTCUSDT", 45250.0, test_signals, 2500000000)
-    if test_message:
-        await send_signal_to_all_users(test_message)
-        print("✅ Test mesajı gönderildi!")
-    else:
-        print("❌ Test mesajı oluşturulamadı!")
     
     # Bot'u ve sinyal işleme döngüsünü paralel olarak çalıştır
     await app.initialize()

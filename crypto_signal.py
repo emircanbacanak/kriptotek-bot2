@@ -1606,6 +1606,8 @@ async def main():
     # Polling başlatmadan önce webhook'ları temizle
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook'lar temizlendi")
+        await asyncio.sleep(2)  # Biraz bekle
     except Exception as e:
         print(f"Webhook temizleme hatası: {e}")
     

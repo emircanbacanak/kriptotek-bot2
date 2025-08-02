@@ -265,7 +265,8 @@ async def send_telegram_message(message, chat_id=None):
                 if response.status == 200:
                     return True
                 else:
-                    print(f"❌ Telegram API hatası: {response.status} - {await response.text()}")
+                    response_text = await response.text()
+                    print(f"❌ Telegram API hatası: {response.status} - {response_text}")
                     return False
                     
     except asyncio.TimeoutError:
@@ -276,28 +277,21 @@ async def send_telegram_message(message, chat_id=None):
         return False
 
 async def send_signal_to_all_users(message):
-    """Sinyali tüm kayıtlı kullanıcılara, gruplara ve kanallara gönder"""
+    """Sinyali sadece izin verilen kullanıcılara, gruplara ve kanallara gönder"""
     sent_chats = set()  # Gönderilen chat'leri takip et
     
-    # Ana chat'e gönder (öncelikli)
-    if TELEGRAM_CHAT_ID:
-        await send_telegram_message(message, TELEGRAM_CHAT_ID)
-        sent_chats.add(str(TELEGRAM_CHAT_ID))
-        print(f"✅ Ana chat'e sinyal gönderildi: {TELEGRAM_CHAT_ID}")
+    # Bot sahibine gönder (her zaman)
+    if BOT_OWNER_ID:
+        try:
+            await send_telegram_message(message, BOT_OWNER_ID)
+            sent_chats.add(str(BOT_OWNER_ID))
+            print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
+        except Exception as e:
+            print(f"❌ Bot sahibine sinyal gönderilemedi: {e}")
     
-    # Kayıtlı gruplara ve kanallara gönder
-    for group_id in BOT_OWNER_GROUPS:
-        if str(group_id) not in sent_chats:  # Ana chat'te değilse
-            try:
-                await send_telegram_message(message, group_id)
-                print(f"✅ Gruba/Kanala sinyal gönderildi: {group_id}")
-                sent_chats.add(str(group_id))
-            except Exception as e:
-                print(f"❌ Gruba/Kanala sinyal gönderilemedi ({group_id}): {e}")
-    
-    # İzin verilen kullanıcılara gönder (ana chat'te ve gruplarda olmayanlar)
+    # İzin verilen kullanıcılara gönder
     for user_id in ALLOWED_USERS:
-        if str(user_id) not in sent_chats:  # Ana chat'te ve gruplarda değilse
+        if str(user_id) not in sent_chats:
             try:
                 await send_telegram_message(message, user_id)
                 print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
@@ -305,46 +299,89 @@ async def send_signal_to_all_users(message):
             except Exception as e:
                 print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
     
-    # Bot sahibine ayrıca gönder (eğer ana chat'te, gruplarda ve ALLOWED_USERS'da değilse)
-    if BOT_OWNER_ID and str(BOT_OWNER_ID) not in sent_chats:
-        await send_telegram_message(message, BOT_OWNER_ID)
-        print(f"✅ Bot sahibine sinyal gönderildi: {BOT_OWNER_ID}")
-    elif BOT_OWNER_ID and str(BOT_OWNER_ID) in sent_chats:
-        print(f"ℹ️ Bot sahibi zaten mesaj aldı (chat_id: {BOT_OWNER_ID})")
+    # İzin verilen gruplara ve kanallara gönder
+    for group_id in BOT_OWNER_GROUPS:
+        if str(group_id) not in sent_chats:
+            try:
+                await send_telegram_message(message, group_id)
+                print(f"✅ Gruba/Kanala sinyal gönderildi: {group_id}")
+                sent_chats.add(str(group_id))
+            except Exception as e:
+                print(f"❌ Gruba/Kanala sinyal gönderilemedi ({group_id}): {e}")
 
-async def start_command(update, context):
-    """Bot başlatma komutu"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
-        return
-    
-    await update.message.reply_text("🚀 Kripto Sinyal Botu başlatıldı!\n\nBu bot kripto para sinyallerini takip eder ve size bildirim gönderir.")
+# start_command fonksiyonunu kaldır
 
 async def help_command(update, context):
     """Yardım komutu"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
+    if not update.effective_user:
         return
     
-    help_text = """
+    user_id = update.effective_user.id
+    
+    # Sadece bot sahibi ve izin verilen kullanıcılar kullanabilir
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
+        return
+    
+    # Bot sahibi için tüm komutları göster
+    if user_id == BOT_OWNER_ID:
+        help_text = """
+🤖 **Kripto Sinyal Botu Komutları (Admin):**
+
+/help - Bu yardım mesajını göster
+/stats - İstatistikleri göster
+/active - Aktif sinyalleri göster
+/test - Test sinyali gönder
+/adduser <user_id> - Kullanıcı ekle
+/removeuser <user_id> - Kullanıcı çıkar
+/listusers - İzin verilen kullanıcıları listele
+        """
+    else:
+        # İzin verilen kullanıcılar için sadece temel komutları göster
+        help_text = """
 🤖 **Kripto Sinyal Botu Komutları:**
 
-/start - Botu başlat
 /help - Bu yardım mesajını göster
-/stats - İstatistikleri göster (sadece bot sahibi)
 /active - Aktif sinyalleri göster
-/adduser <user_id> - Kullanıcı ekle (sadece bot sahibi)
-/removeuser <user_id> - Kullanıcı çıkar (sadece bot sahibi)
-/listusers - İzin verilen kullanıcıları listele (sadece bot sahibi)
-/addchannel - Kanalı bot listesine ekle (sadece kanallarda, bot sahibi)
-    """
+        """
+    
     await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def test_command(update, context):
+    """Test sinyali gönderme komutu (sadece bot sahibi)"""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    
+    # Sadece bot sahibi kullanabilir
+    if user_id != BOT_OWNER_ID:
+        return
+    
+    # Test sinyali oluştur - gerçek format
+    test_message = """🚨 AL SİNYALİ 🚨
+
+🔹 Kripto Çifti: BTCUSDT  
+💵 Giriş Fiyatı: $45,000.00
+📈 Hedef Fiyat: $46,350.00  
+📉 Stop Loss: $43,875.00
+⚡ Kaldıraç Önerisi: 10x
+📊 24h Hacim: $2,500,000,000
+
+⚠️ <b>ÖNEMLİ UYARILAR:</b>
+• Bu bir yatırım tavsiyesi değildir
+• En fazla %25 kaybedecek şekilde stop ayarlayın
+
+📺 <b>Kanallar:</b>
+🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>
+
+⚠️ <b>Bu bir test sinyalidir!</b> ⚠️"""
+    
+    await update.message.reply_text("🧪 Test sinyali gönderiliyor...")
+    
+    # Test sinyalini gönder
+    await send_signal_to_all_users(test_message)
+    
+    await update.message.reply_text("✅ Test sinyali başarıyla gönderildi!")
 
 async def stats_command(update, context):
     """İstatistik komutu (sadece bot sahibi)"""
@@ -355,7 +392,6 @@ async def stats_command(update, context):
     
     # Sadece bot sahibi kullanabilir
     if user_id != BOT_OWNER_ID:
-        # Bot sahibi değilse hiçbir şey yapma, sessizce çık
         return
     
     # Global istatistikleri kullan
@@ -392,11 +428,13 @@ async def stats_command(update, context):
 
 async def active_command(update, context):
     """Aktif sinyaller komutu"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
+    if not update.effective_user:
+        return
     
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok.")
+    user_id = update.effective_user.id
+    
+    # Sadece bot sahibi ve izin verilen kullanıcılar kullanabilir
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
         return
     
     # Global aktif sinyalleri kullan
@@ -416,25 +454,15 @@ async def active_command(update, context):
 
 """
     
-
-    
     await update.message.reply_text(active_text, parse_mode='Markdown')
 
 async def adduser_command(update, context):
     """Kullanıcı ekleme komutu (sadece bot sahibi)"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
     if user_id != BOT_OWNER_ID:
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
         return
     
     if not context.args:
@@ -459,19 +487,11 @@ async def adduser_command(update, context):
 
 async def removeuser_command(update, context):
     """Kullanıcı çıkarma komutu (sadece bot sahibi)"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
     if user_id != BOT_OWNER_ID:
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
         return
     
     if not context.args:
@@ -491,19 +511,11 @@ async def removeuser_command(update, context):
 
 async def listusers_command(update, context):
     """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi)"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
     if user_id != BOT_OWNER_ID:
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
         return
     
     if not ALLOWED_USERS:
@@ -514,49 +526,18 @@ async def listusers_command(update, context):
     
     await update.message.reply_text(users_text, parse_mode='Markdown')
 
-async def addchannel_command(update, context):
-    """Kanal ekleme komutu (sadece bot sahibi)"""
+# addchannel_command fonksiyonunu kaldır
+
+async def handle_message(update, context):
+    """Genel mesaj handler'ı"""
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
     
-    # Sadece bot sahibi kullanabilir
-    if user_id != BOT_OWNER_ID:
-        await update.message.reply_text("❌ Bu komutu sadece bot sahibi kullanabilir.")
-        return
-    
-    chat = update.effective_chat
-    
-    # Sadece kanallarda çalışır
-    if chat.type != "channel":
-        await update.message.reply_text("❌ Bu komut sadece kanallarda kullanılabilir.")
-        return
-    
-    # Kanalı admin gruplarına ekle
-    BOT_OWNER_GROUPS.add(chat.id)
-    print(f"✅ Bot sahibi tarafından {chat.title} kanalına eklendi. Chat ID: {chat.id}")
-    print(f"🔍 BOT_OWNER_GROUPS güncellendi: {BOT_OWNER_GROUPS}")
-    
-    # MongoDB'ye kaydet
-    save_admin_groups()
-    
-    # Bot sahibine bildirim gönder
-    success_msg = f"✅ **Bot Kanal Ekleme Başarılı**\n\nBot '{chat.title}' kanalına başarıyla eklendi.\n\nChat ID: {chat.id}\nBot artık bu kanalda çalışabilir."
-    await send_telegram_message(success_msg)
-    
-    await update.message.reply_text(f"✅ Kanal başarıyla eklendi!\n\nKanal: {chat.title}\nID: {chat.id}")
-
-async def handle_message(update, context):
-    """Genel mesaj handler'ı"""
-    if not should_respond_to_message(update):
-        return  # Gruplarda bot sahibi dışında birisi yazarsa hiçbir şey yapma
-    
-    if not is_authorized_chat(update):
-        await update.message.reply_text("❌ Bu botu kullanma yetkiniz yok. Sadece bot sahibi ve izin verilen kullanıcılar bu botu kullanabilir.")
-        return
-    
-    await update.message.reply_text("🤖 Bu bot sadece komutları destekler. /help yazarak mevcut komutları görebilirsiniz.")
+    # Sadece bot sahibi için yardım mesajı göster
+    if user_id == BOT_OWNER_ID:
+        await update.message.reply_text("🤖 Bu bot sadece komutları destekler. /help yazarak mevcut komutları görebilirsiniz.")
 
 async def error_handler(update, context):
     """Hata handler'ı"""
@@ -615,7 +596,7 @@ async def handle_all_messages(update, context):
                 
                 # Kanalı izin verilen gruplara ekle
                 BOT_OWNER_GROUPS.add(chat.id)
-                print(f"✅ Kanal otomatik olarak izin verilen gruplara eklendi: {chat.title} ({chat.id})")
+                print(f"✅ Kanal eklendi: {chat.title} ({chat.id})")
                 
                 # MongoDB'ye kaydet
                 save_admin_groups()
@@ -742,10 +723,10 @@ async def setup_bot():
         print(f"⚠️ Webhook temizleme hatası: {e}")
     
     # Komut handler'ları
-    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("active", active_command))
+    app.add_handler(CommandHandler("test", test_command))
     app.add_handler(CommandHandler("adduser", adduser_command))
     app.add_handler(CommandHandler("removeuser", removeuser_command))
     app.add_handler(CommandHandler("listusers", listusers_command))
@@ -835,10 +816,10 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=3.0, st
 
 ⚠️ <b>ÖNEMLİ UYARILAR:</b>
 • Bu bir yatırım tavsiyesi değildir
-• En fazla %35 kaybedecek şekilde stop ayarlayın
+• En fazla %25 kaybedecek şekilde stop ayarlayın
 
 📺 <b>Kanallar:</b>
-🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a>"""
+🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""
 
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
 
@@ -1034,7 +1015,6 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
     Sadece Futures'da aktif, USDT bazlı coinlerden hacme göre sıralanmış ilk top_n kadar uygun coin döndürür.
     1 günlük verisi 30 mumdan az olan coin'ler elenir.
     """
-    print("🔍 Futures sembolleri alınıyor...")
     # Futures exchange info al
     futures_exchange_info = client.futures_exchange_info()
     
@@ -1047,8 +1027,6 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
             symbol['contractType'] == 'PERPETUAL'
         ):
             futures_usdt_pairs.add(symbol['symbol'])
-
-    print(f"📊 Toplam {len(futures_usdt_pairs)} USDT Futures sembolü bulundu")
 
     # Sadece USDT çiftlerinin ticker'larını al
     futures_tickers = client.futures_ticker()
@@ -1066,11 +1044,9 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
                 continue
 
     high_volume_pairs.sort(key=lambda x: x[1], reverse=True)
-    print(f"📈 Hacim sıralaması yapıldı, {len(high_volume_pairs)} sembol işleniyor")
 
     # Sadece ilk 150 sembolü al (hacme göre sıralanmış) - 100'e ulaşmak için
     high_volume_pairs = high_volume_pairs[:150]
-    print(f"🎯 İlk 150 yüksek hacimli sembol seçildi")
 
     uygun_pairs = []
     idx = 0
@@ -1091,8 +1067,6 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
             continue
         idx += 1
 
-    print(f"🎯 Toplam {len(uygun_pairs)} uygun sembol bulundu")
-    
     # Sembolleri grup halinde yazdır
     if uygun_pairs:
         print("📋 İşlenecek semboller:")
@@ -1208,12 +1182,32 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         # 1 saatlik cooldown kontrolü
         cooldown_key = (symbol, sinyal_tipi)
         if cooldown_key in cooldown_signals:
-            last_time = cooldown_signals[cooldown_key]
+            cooldown_data = cooldown_signals[cooldown_key]
+            last_time = cooldown_data["datetime"]
+            locked_signals = cooldown_data["signals"]
+            
+            # 1 saat geçti mi kontrol et
             if (datetime.now() - last_time) < timedelta(hours=1):
+                # Cooldown süresi dolmamış
+                previous_signals[symbol] = current_signals.copy()
+                return
+            
+            # 1 saat geçti, sinyal değerleri değişti mi kontrol et
+            signals_changed = False
+            for tf in tf_names:
+                if locked_signals.get(tf) != current_signals.get(tf):
+                    signals_changed = True
+                    print(f"🔄 {symbol} sinyal değişti: {tf} {locked_signals.get(tf)} -> {current_signals.get(tf)}")
+                    break
+            
+            if not signals_changed:
+                print(f"⏸️ {symbol} cooldown süresi doldu ama sinyal değerleri değişmedi, bekleniyor...")
                 previous_signals[symbol] = current_signals.copy()
                 return
             else:
+                # Sinyal değerleri değişti, cooldown'ı kaldır
                 del cooldown_signals[cooldown_key]
+                print(f"✅ {symbol} cooldown kaldırıldı, yeni sinyal aranabilir")
         # Aynı sinyal daha önce gönderilmiş mi kontrol et
         signal_key = (symbol, sinyal_tipi)
         if sent_signals.get(signal_key) == signal_values:
@@ -1267,7 +1261,6 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         stats["active_signals_count"] = len(active_signals)
 
         if message:
-            print(f"📤 Telegram'a gönderiliyor: {symbol} - {dominant_signal}")
             await send_signal_to_all_users(message)
         else:
             print(f"❌ {symbol} için mesaj oluşturulamadı!")
@@ -1282,7 +1275,7 @@ async def signal_processing_loop():
     
     sent_signals = dict()  # {(symbol, sinyal_tipi): signal_values}
     positions = dict()  # {symbol: position_info}
-    cooldown_signals = dict()  # {(symbol, sinyal_tipi): datetime}
+    cooldown_signals = dict()  # {(symbol, sinyal_tipi): {"datetime": datetime, "signals": {tf: signal}}}
     stop_cooldown = dict()  # {symbol: datetime}
     previous_signals = dict()  # {symbol: {tf: signal}} - İlk çalıştığında kaydedilen sinyaller
     stopped_coins = dict()  # {symbol: {...}}
@@ -1307,9 +1300,7 @@ async def signal_processing_loop():
     }
     tf_names = ['4h', '1d']  # 4h-1d kombinasyonu 
     
-    print("🚀 4h-1d Kombinasyon Futures Sinyal Botu başlatıldı!")
-    print(f"📊 Ayarlar: %{profit_percent} Kar Hedefi, %{stop_percent} Stop Loss")
-    print("📈 Veri Kaynağı: Binance Futures")
+    print("🚀 Bot başlatıldı!")
     print("⏰ İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
     
     while True:
@@ -1334,7 +1325,10 @@ async def signal_processing_loop():
                             if current_high >= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "ALIS")] = datetime.now()
+                                cooldown_signals[(symbol, "ALIS")] = {
+                                    "datetime": datetime.now(),
+                                    "signals": pos["signals"]
+                                }
                                 
                                 # Başarılı sinyal olarak kaydet
                                 profit_usd = 100 * (profit_percent / 100) * 10
@@ -1367,7 +1361,10 @@ async def signal_processing_loop():
                             elif current_low <= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "ALIS")] = datetime.now()
+                                cooldown_signals[(symbol, "ALIS")] = {
+                                    "datetime": datetime.now(),
+                                    "signals": pos["signals"]
+                                }
                                 stop_cooldown[symbol] = datetime.now()
                                 
                                 # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
@@ -1417,7 +1414,10 @@ async def signal_processing_loop():
                             if current_low <= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "SATIS")] = datetime.now()
+                                cooldown_signals[(symbol, "SATIS")] = {
+                                    "datetime": datetime.now(),
+                                    "signals": pos["signals"]
+                                }
                                 
                                 # Başarılı sinyal olarak kaydet
                                 profit_usd = 100 * (profit_percent / 100) * 10
@@ -1450,7 +1450,10 @@ async def signal_processing_loop():
                             elif current_high >= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "SATIS")] = datetime.now()
+                                cooldown_signals[(symbol, "SATIS")] = {
+                                    "datetime": datetime.now(),
+                                    "signals": pos["signals"]
+                                }
                                 stop_cooldown[symbol] = datetime.now()
                                 
                                 # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
@@ -1504,15 +1507,21 @@ async def signal_processing_loop():
                     continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
-            symbols = await get_active_high_volume_usdt_pairs(100)  # Sadece ilk 100 sembol
+            new_symbols = await get_active_high_volume_usdt_pairs(100)  # Sadece ilk 100 sembol
+            
+            # Aktif pozisyonları ve cooldown'daki coinleri koru
+            protected_symbols = set()
+            protected_symbols.update(positions.keys())  # Aktif pozisyonlar
+            protected_symbols.update(cooldown_signals.keys())  # Cooldown'daki coinler
+            
+            # Yeni sembollere korunan sembolleri ekle
+            symbols = list(new_symbols)
+            for protected_symbol in protected_symbols:
+                if protected_symbol not in symbols:
+                    symbols.append(protected_symbol)
+            
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
-            # print(f"Takip edilen coin sayısı: {len(symbols)}")  # Debug mesajını kaldır
-            # print(f"İşlenecek semboller: {symbols[:10]}...")  # Debug mesajını kaldır
 
-            # Yeni sinyal arama
-            # 2. Sinyal arama
-            # print("🚀 Sinyal arama başlatılıyor...")  # Debug mesajını kaldır
-            # Paralel task listesi oluştur
             tasks = [process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent) for symbol in symbols]
             await asyncio.gather(*tasks)
             # print("✅ Sinyal arama tamamlandı")  # Debug mesajını kaldır
@@ -1551,7 +1560,6 @@ async def signal_processing_loop():
             print(f"   Başarılı: {stats['successful_signals']}")
             print(f"   Başarısız: {stats['failed_signals']}")
             print(f"   Aktif Sinyal: {stats['active_signals_count']}")
-            print(f"   Toplam Görülen Coin: {stats['tracked_coins_count']}")
             print(f"   100$ Yatırım Toplam Kar/Zarar: ${stats['total_profit_loss']:.2f}")
             # Sadece kapanmış işlemler için ortalama kar/zarar
             closed_count = stats['successful_signals'] + stats['failed_signals']
@@ -1582,6 +1590,8 @@ async def signal_processing_loop():
             print(f"Genel hata: {e}")
             await asyncio.sleep(900)  # 15 dakika
 
+# test_telegram_config fonksiyonunu kaldır
+
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle
     load_allowed_users()
@@ -1593,43 +1603,22 @@ async def main():
     await app.initialize()
     await app.start()
     
-    # Polling başlatmadan önce ek güvenlik
+    # Polling başlatmadan önce webhook'ları temizle
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Ana fonksiyonda webhook'lar temizlendi")
     except Exception as e:
-        print(f"⚠️ Ana fonksiyonda webhook temizleme hatası: {e}")
-    
-    # Polling başlatmadan önce ek güvenlik
-    try:
-        await app.bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Polling öncesi webhook'lar temizlendi")
-        await asyncio.sleep(3)  # Daha uzun bekleme
-        
-        # Webhook durumunu kontrol et
-        webhook_info = await app.bot.get_webhook_info()
-        print(f"Webhook durumu: {webhook_info}")
-        
-    except Exception as e:
-        print(f"⚠️ Polling öncesi webhook temizleme hatası: {e}")
-    
-    # Telegram bot polling'i başlat
-    print("🤖 Telegram bot polling başlatılıyor...")
+        print(f"Webhook temizleme hatası: {e}")
     
     # Bot polling'i başlat
     try:
         await app.updater.start_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "chat_member", "my_chat_member", "channel_post"])
-        print("✅ Telegram bot polling başarıyla başlatıldı")
     except Exception as e:
-        print(f"❌ Telegram bot polling başlatma hatası: {e}")
-        print("⚠️ Bot sadece sinyal işleme modunda çalışacak")
+        print(f"Bot polling hatası: {e}")
     
     # Sinyal işleme döngüsünü başlat
     signal_task = asyncio.create_task(signal_processing_loop())
     
     try:
-        # Sinyal işleme döngüsünü çalıştır (bot polling arka planda çalışacak)
-        print("🚀 Bot başarıyla başlatıldı! Telegram komutları kullanılabilir.")
         await signal_task
     except KeyboardInterrupt:
         print("\n⚠️ Bot kapatılıyor...")

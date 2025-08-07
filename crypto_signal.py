@@ -485,12 +485,12 @@ async def test_command(update, context):
 💵 Giriş Fiyatı: $45,000.00
 📈 Hedef Fiyat: $46,350.00  
 📉 Stop Loss: $43,875.00
-⚡ Kaldıraç Önerisi: 10x
-📊 24h Hacim: $2,500,000,000
+⚡ Kaldıraç: 10x
+📊 24h Hacim: $2.5B
 
 ⚠️ <b>ÖNEMLİ UYARILAR:</b>
 • Bu bir yatırım tavsiyesi değildir
-• En fazla %25 kaybedecek şekilde stop ayarlayın
+• Stopunuzu en fazla %25 ayarlayın
 
 📺 <b>Kanallar:</b>
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>
@@ -976,6 +976,17 @@ def format_price(price, ref_price=None):
         else:
             return f"{price:.10f}".rstrip('0').rstrip('.')
 
+def format_volume(volume):
+    """Hacmi bin, milyon, milyar formatında formatla"""
+    if volume >= 1_000_000_000:  # Milyar
+        return f"${volume/1_000_000_000:.1f}B"
+    elif volume >= 1_000_000:  # Milyon
+        return f"${volume/1_000_000:.1f}M"
+    elif volume >= 1_000:  # Bin
+        return f"${volume/1_000:.1f}K"
+    else:
+        return f"${volume:,.0f}"
+
 def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)
@@ -1001,7 +1012,7 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, st
     
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
-    volume_usd_formatted = f"${volume:,.0f}"  # USD formatında hacim
+    volume_formatted = format_volume(volume)  # Yeni hacim formatı
     message = f"""
 🚨 {sinyal_tipi} 🚨
 
@@ -1009,12 +1020,12 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, st
 💵 Giriş Fiyatı: {price_str}
 📈 Hedef Fiyat: {target_price_str}  
 📉 Stop Loss: {stop_loss_str}
-⚡ Kaldıraç Önerisi: {leverage}x
-📊 24h Hacim: {volume_usd_formatted}
+⚡ Kaldıraç: {leverage}x
+📊 24h Hacim: {volume_formatted}
 
 ⚠️ <b>ÖNEMLİ UYARILAR:</b>
 • Bu bir yatırım tavsiyesi değildir
-• En fazla %25 kaybedecek şekilde stop ayarlayın
+• Stopunuzu en fazla %25 ayarlayın
 
 📺 <b>Kanallar:</b>
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""
@@ -1024,7 +1035,7 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, st
 def create_special_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0):
     """Özel yıldızlı sinyal mesajını oluştur"""
     price_str = format_price(price, price)
-    volume_str = f"{volume:,.0f}" if volume else "N/A"
+    volume_formatted = format_volume(volume) if volume else "N/A"
     
     # Sinyal türünü belirle
     signal_values = [signals.get(tf, 0) for tf in ['1h', '2h', '4h', '8h', '12h']]
@@ -1057,7 +1068,7 @@ def create_special_signal_message(symbol, price, signals, volume, profit_percent
 🎯 <b>Hedef:</b> {target_str} (+{profit_percent}%)
 🛑 <b>Stop Loss:</b> {stop_str} (-{stop_percent}%)
 ⚡ <b>Kaldıraç:</b> 20x
-📊 <b>Hacim (24h):</b> ${volume_str}
+📊 <b>Hacim (24h):</b> {volume_formatted}
 
 ⏰ <b>Zaman Dilimleri:</b> 1h + 2h + 4h + 8h + 12h
 🎯 <b>Filtre:</b> 5/5 (Tüm zaman dilimleri uyumlu)
@@ -1505,7 +1516,6 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
                     else:
                         signal = -1
                 current_signals[tf_name] = signal
-                print(f"🔍 DEBUG: {symbol} - {tf_name} sinyali: {signal} (closest_idx: {closest_idx}, df_len: {len(df)})")
             else:
                 # Son mumu al
                 signal = int(df.iloc[-1]['signal'])
@@ -1515,7 +1525,6 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
                     else:
                         signal = -1
                 current_signals[tf_name] = signal
-                print(f"🔍 DEBUG: {symbol} - {tf_name} sinyali (son mum): {signal}")
             # print(f"📊 {symbol} - {tf_name}: {signal}")  # Debug mesajını kaldır
         except Exception as e:
             # print(f"Hata: {symbol} - {tf_name} - {str(e)}")  # Debug mesajını kaldır

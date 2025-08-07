@@ -57,6 +57,22 @@ bot = telegram.Bot(token=TELEGRAM_TOKEN)
 # Bot sahibinin ID'si (bu değeri .env dosyasından alabilirsiniz)
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 
+# Admin kullanıcıları listesi (bot sahibi tarafından yönetilir)
+ADMIN_USERS = set()
+
+# Binance interval çevirimi
+BINANCE_INTERVALS = {
+    '15m': '15m',
+    '30m': '30m',
+    '1h': '1h',
+    '2h': '2h',
+    '4h': '4h',
+    '8h': '8h',
+    '12h': '12h',
+    '1d': '1d',
+    '1w': '1w'
+}
+
 # MongoDB bağlantısı
 mongo_client = None
 mongo_db = None
@@ -85,12 +101,13 @@ def connect_mongodb():
 
 def load_allowed_users():
     """İzin verilen kullanıcıları ve admin bilgilerini MongoDB'den yükle"""
-    global ALLOWED_USERS, BOT_OWNER_GROUPS
+    global ALLOWED_USERS, BOT_OWNER_GROUPS, ADMIN_USERS
     try:
         if not connect_mongodb():
             print("⚠️ MongoDB bağlantısı kurulamadı, boş liste ile başlatılıyor")
             ALLOWED_USERS = set()
             BOT_OWNER_GROUPS = set()
+            ADMIN_USERS = set()
             return
         
         # MongoDB'den kullanıcıları çek
@@ -111,14 +128,25 @@ def load_allowed_users():
             else:
                 print("ℹ️ MongoDB'de admin grubu bulunamadı, boş liste ile başlatılıyor")
                 BOT_OWNER_GROUPS = set()
+            
+            # Admin kullanıcılarını çek
+            admin_users_doc = mongo_collection.find_one({"_id": "admin_users"})
+            if admin_users_doc:
+                ADMIN_USERS = set(admin_users_doc.get('admin_ids', []))
+                print(f"✅ MongoDB'den {len(ADMIN_USERS)} admin kullanıcı yüklendi")
+            else:
+                print("ℹ️ MongoDB'de admin kullanıcı bulunamadı, boş liste ile başlatılıyor")
+                ADMIN_USERS = set()
         else:
             print("⚠️ MongoDB collection bulunamadı, boş liste ile başlatılıyor")
             ALLOWED_USERS = set()
             BOT_OWNER_GROUPS = set()
+            ADMIN_USERS = set()
     except Exception as e:
         print(f"❌ MongoDB'den veriler yüklenirken hata: {e}")
         ALLOWED_USERS = set()
         BOT_OWNER_GROUPS = set()
+        ADMIN_USERS = set()
 
 def save_allowed_users():
     """İzin verilen kullanıcıları MongoDB'ye kaydet"""
@@ -168,6 +196,30 @@ def save_admin_groups():
     except Exception as e:
         print(f"❌ MongoDB'ye admin grupları kaydedilirken hata: {e}")
 
+def save_admin_users():
+    """Admin kullanıcılarını MongoDB'ye kaydet"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, admin kullanıcıları kaydedilemedi")
+                return
+        
+        # Upsert ile kaydet (varsa güncelle, yoksa ekle)
+        mongo_collection.update_one(
+            {"_id": "admin_users"},
+            {
+                "$set": {
+                    "admin_ids": list(ADMIN_USERS),
+                    "last_updated": str(datetime.now()),
+                    "count": len(ADMIN_USERS)
+                }
+            },
+            upsert=True
+        )
+        print(f"✅ MongoDB'ye {len(ADMIN_USERS)} admin kullanıcı kaydedildi")
+    except Exception as e:
+        print(f"❌ MongoDB'ye admin kullanıcıları kaydedilirken hata: {e}")
+
 def close_mongodb():
     """MongoDB bağlantısını kapat"""
     global mongo_client
@@ -184,11 +236,20 @@ app = None
 # MongoDB kullanıldığı için dosya referansını kaldırıyoruz
 
 # Global değişkenler (main fonksiyonundan erişim için)
-global_stats = {}
+global_stats = {
+    "total_signals": 0,
+    "successful_signals": 0,
+    "failed_signals": 0,
+    "total_profit_loss": 0.0,
+    "active_signals_count": 0,
+    "tracked_coins_count": 0
+}
 global_active_signals = {}
 global_successful_signals = {}
 global_failed_signals = {}
-BOT_OWNER_GROUPS = set()  # Bot sahibinin eklediği gruplar
+global_changed_symbols = set()  # Değişiklik yaşayan semboller
+global_allowed_users = set()  # İzin verilen kullanıcılar
+global_admin_users = set()  # Admin kullanıcılar
 
 def is_authorized_chat(update):
     """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
@@ -200,16 +261,16 @@ def is_authorized_chat(update):
     
     # Özel sohbet ve yetkili kullanıcı
     if chat.type == "private":
-        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS
+        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS
     
     # Bot sahibinin eklediği grup/kanal ve bot sahibi
     if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
-        return user_id == BOT_OWNER_ID
+        return user_id == BOT_OWNER_ID or user_id in ADMIN_USERS
     
     return False
 
 def should_respond_to_message(update):
-    """Mesaja yanıt verilmeli mi kontrol et (gruplarda ve kanallarda sadece bot sahibi)"""
+    """Mesaja yanıt verilmeli mi kontrol et (gruplarda ve kanallarda sadece bot sahibi ve adminler)"""
     chat = update.effective_chat
     if not chat or not update.effective_user:
         return False
@@ -218,13 +279,17 @@ def should_respond_to_message(update):
     
     # Özel sohbet ve yetkili kullanıcı
     if chat.type == "private":
-        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS
+        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS
     
-    # Bot sahibinin eklediği grup/kanal ve sadece bot sahibi
+    # Bot sahibinin eklediği grup/kanal ve sadece bot sahibi ve adminler
     if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
-        return user_id == BOT_OWNER_ID
+        return user_id == BOT_OWNER_ID or user_id in ADMIN_USERS
     
     return False
+
+def is_admin(user_id):
+    """Kullanıcının admin olup olmadığını kontrol et"""
+    return user_id == BOT_OWNER_ID or user_id in ADMIN_USERS
 
 async def send_telegram_message(message, chat_id=None):
     """Telegram mesajı gönder"""
@@ -318,44 +383,100 @@ async def help_command(update, context):
     
     user_id = update.effective_user.id
     
-    # Sadece bot sahibi ve izin verilen kullanıcılar kullanabilir
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
-        return
+    # Sadece bot sahibi, adminler ve izin verilen kullanıcılar kullanabilir
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS and user_id not in ADMIN_USERS:
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     # Bot sahibi için tüm komutları göster
     if user_id == BOT_OWNER_ID:
         help_text = """
-🤖 **Kripto Sinyal Botu Komutları (Admin):**
+👑 **Kripto Sinyal Botu Komutları (Bot Sahibi):**
 
+📊 **Temel Komutlar:**
 /help - Bu yardım mesajını göster
 /stats - İstatistikleri göster
 /active - Aktif sinyalleri göster
 /test - Test sinyali gönder
+
+👥 **Kullanıcı Yönetimi:**
 /adduser <user_id> - Kullanıcı ekle
 /removeuser <user_id> - Kullanıcı çıkar
 /listusers - İzin verilen kullanıcıları listele
+
+👑 **Admin Yönetimi:**
+/adminekle <user_id> - Admin ekle
+/adminsil <user_id> - Admin sil
+/listadmins - Admin listesini göster
+
+🔧 **Özel Yetkiler:**
+• Tüm komutlara erişim
+• Admin ekleme/silme
+• Bot tam kontrolü
+        """
+    elif user_id in ADMIN_USERS:
+        # Adminler için admin komutlarını da göster
+        help_text = """
+🛡️ **Kripto Sinyal Botu Komutları (Admin):**
+
+📊 **Temel Komutlar:**
+/help - Bu yardım mesajını göster
+/stats - İstatistikleri göster
+/active - Aktif sinyalleri göster
+/test - Test sinyali gönder
+
+👥 **Kullanıcı Yönetimi:**
+/adduser <user_id> - Kullanıcı ekle
+/removeuser <user_id> - Kullanıcı çıkar
+/listusers - İzin verilen kullanıcıları listele
+
+👑 **Admin Yönetimi:**
+/listadmins - Admin listesini göster
+
+🔧 **Yetkiler:**
+• Kullanıcı ekleme/silme
+• Test sinyali gönderme
+• İstatistik görüntüleme
+• Admin listesi görüntüleme
         """
     else:
         # İzin verilen kullanıcılar için sadece temel komutları göster
         help_text = """
-🤖 **Kripto Sinyal Botu Komutları:**
+📱 **Kripto Sinyal Botu Komutları (Kullanıcı):**
 
+📊 **Temel Komutlar:**
 /help - Bu yardım mesajını göster
 /active - Aktif sinyalleri göster
+
+🔧 **Yetkiler:**
+• Aktif sinyalleri görüntüleme
+• Sinyal mesajlarını alma
         """
     
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    # Mesajı özel mesaj olarak gönder (grup yerine)
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=help_text,
+            parse_mode='Markdown'
+        )
+        # Grup mesajını sil (isteğe bağlı)
+        if update.message.chat.type != 'private':
+            await update.message.delete()
+    except Exception as e:
+        print(f"❌ Özel mesaj gönderilemedi ({user_id}): {e}")
+        # Eğer özel mesaj gönderilemezse, grup mesajı olarak gönder
+        await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def test_command(update, context):
-    """Test sinyali gönderme komutu (sadece bot sahibi)"""
+    """Test sinyali gönderme komutu (sadece bot sahibi ve adminler)"""
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
     
-    # Sadece bot sahibi kullanabilir
-    if user_id != BOT_OWNER_ID:
-        return
+    # Sadece bot sahibi ve adminler kullanabilir
+    if not is_admin(user_id):
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     # Test sinyali oluştur - gerçek format
     test_message = """🚨 AL SİNYALİ 🚨
@@ -384,15 +505,15 @@ async def test_command(update, context):
     await update.message.reply_text("✅ Test sinyali başarıyla gönderildi!")
 
 async def stats_command(update, context):
-    """İstatistik komutu (sadece bot sahibi)"""
+    """İstatistik komutu (sadece bot sahibi ve adminler)"""
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
     
-    # Sadece bot sahibi kullanabilir
-    if user_id != BOT_OWNER_ID:
-        return
+    # Sadece bot sahibi ve adminler kullanabilir
+    if not is_admin(user_id):
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     # Global istatistikleri kullan
     stats = global_stats
@@ -433,9 +554,9 @@ async def active_command(update, context):
     
     user_id = update.effective_user.id
     
-    # Sadece bot sahibi ve izin verilen kullanıcılar kullanabilir
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS:
-        return
+    # Sadece bot sahibi, adminler ve izin verilen kullanıcılar kullanabilir
+    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS and user_id not in ADMIN_USERS:
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     # Global aktif sinyalleri kullan
     active_signals = global_active_signals
@@ -457,13 +578,13 @@ async def active_command(update, context):
     await update.message.reply_text(active_text, parse_mode='Markdown')
 
 async def adduser_command(update, context):
-    """Kullanıcı ekleme komutu (sadece bot sahibi)"""
+    """Kullanıcı ekleme komutu (sadece bot sahibi ve adminler)"""
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID:
-        return
+    if not is_admin(user_id):
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     if not context.args:
         await update.message.reply_text("❌ Kullanım: /adduser <user_id>")
@@ -479,20 +600,24 @@ async def adduser_command(update, context):
             await update.message.reply_text("❌ Bu kullanıcı zaten izin verilen kullanıcılar listesinde.")
             return
         
+        if new_user_id in ADMIN_USERS:
+            await update.message.reply_text("❌ Bu kullanıcı zaten admin listesinde.")
+            return
+        
         ALLOWED_USERS.add(new_user_id)
-        save_allowed_users()  # Dosyaya kaydet
+        save_allowed_users()  # MongoDB'ye kaydet
         await update.message.reply_text(f"✅ Kullanıcı {new_user_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
     except ValueError:
         await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
 
 async def removeuser_command(update, context):
-    """Kullanıcı çıkarma komutu (sadece bot sahibi)"""
+    """Kullanıcı çıkarma komutu (sadece bot sahibi ve adminler)"""
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID:
-        return
+    if not is_admin(user_id):
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     if not context.args:
         await update.message.reply_text("❌ Kullanım: /removeuser <user_id>")
@@ -502,7 +627,7 @@ async def removeuser_command(update, context):
         remove_user_id = int(context.args[0])
         if remove_user_id in ALLOWED_USERS:
             ALLOWED_USERS.remove(remove_user_id)
-            save_allowed_users()  # Dosyaya kaydet
+            save_allowed_users()  # MongoDB'ye kaydet
             await update.message.reply_text(f"✅ Kullanıcı {remove_user_id} başarıyla çıkarıldı ve kalıcı olarak kaydedildi.")
         else:
             await update.message.reply_text(f"❌ Kullanıcı {remove_user_id} zaten izin verilen kullanıcılar listesinde yok.")
@@ -510,13 +635,13 @@ async def removeuser_command(update, context):
         await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
 
 async def listusers_command(update, context):
-    """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi)"""
+    """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi ve adminler)"""
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID:
-        return
+    if not is_admin(user_id):
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
     
     if not ALLOWED_USERS:
         users_text = "📋 **İzin Verilen Kullanıcılar:**\n\nHenüz izin verilen kullanıcı yok."
@@ -526,7 +651,75 @@ async def listusers_command(update, context):
     
     await update.message.reply_text(users_text, parse_mode='Markdown')
 
-# addchannel_command fonksiyonunu kaldır
+async def adminekle_command(update, context):
+    """Admin ekleme komutu (sadece bot sahibi)"""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
+    
+    if not context.args:
+        await update.message.reply_text("❌ Kullanım: /adminekle <user_id>")
+        return
+    
+    try:
+        new_admin_id = int(context.args[0])
+        if new_admin_id == BOT_OWNER_ID:
+            await update.message.reply_text("❌ Bot sahibi zaten admin yetkilerine sahiptir.")
+            return
+        
+        if new_admin_id in ADMIN_USERS:
+            await update.message.reply_text("❌ Bu kullanıcı zaten admin listesinde.")
+            return
+        
+        ADMIN_USERS.add(new_admin_id)
+        save_admin_users()  # MongoDB'ye kaydet
+        await update.message.reply_text(f"✅ Admin {new_admin_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
+    except ValueError:
+        await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
+
+async def adminsil_command(update, context):
+    """Admin silme komutu (sadece bot sahibi)"""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
+    
+    if not context.args:
+        await update.message.reply_text("❌ Kullanım: /adminsil <user_id>")
+        return
+    
+    try:
+        remove_admin_id = int(context.args[0])
+        if remove_admin_id in ADMIN_USERS:
+            ADMIN_USERS.remove(remove_admin_id)
+            save_admin_users()  # MongoDB'ye kaydet
+            await update.message.reply_text(f"✅ Admin {remove_admin_id} başarıyla silindi ve kalıcı olarak kaydedildi.")
+        else:
+            await update.message.reply_text(f"❌ Admin {remove_admin_id} zaten admin listesinde yok.")
+    except ValueError:
+        await update.message.reply_text("❌ Geçersiz user_id. Lütfen sayısal bir değer girin.")
+
+async def listadmins_command(update, context):
+    """Admin listesini gösterme komutu (sadece bot sahibi ve adminler)"""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
+    
+    if not ADMIN_USERS:
+        admins_text = "👑 **Admin Kullanıcıları:**\n\nHenüz admin kullanıcı yok.\n\nBot Sahibi: {BOT_OWNER_ID}"
+    else:
+        admins_list = "\n".join([f"• {admin_id}" for admin_id in ADMIN_USERS])
+        admins_text = f"👑 **Admin Kullanıcıları:**\n\n{admins_list}\n\nBot Sahibi: {BOT_OWNER_ID}"
+    
+    await update.message.reply_text(admins_text, parse_mode='Markdown')
 
 async def handle_message(update, context):
     """Genel mesaj handler'ı"""
@@ -535,9 +728,10 @@ async def handle_message(update, context):
     
     user_id = update.effective_user.id
     
-    # Sadece bot sahibi için yardım mesajı göster
-    if user_id == BOT_OWNER_ID:
+    # Sadece yetkili kullanıcılar için yardım mesajı göster
+    if user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS:
         await update.message.reply_text("🤖 Bu bot sadece komutları destekler. /help yazarak mevcut komutları görebilirsiniz.")
+    # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
 
 async def error_handler(update, context):
     """Hata handler'ı"""
@@ -575,8 +769,9 @@ async def error_handler(update, context):
     if update and update.effective_chat and update.effective_user:
         if update.effective_chat.type == "private":
             user_id = update.effective_user.id
-            if user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS:
+            if user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS:
                 await update.message.reply_text("❌ Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
+            # İzin verilmeyen kullanıcılar için hata mesajı bile gösterme
 
 async def handle_all_messages(update, context):
     """Tüm mesajları dinler ve kanal olaylarını yakalar"""
@@ -730,6 +925,9 @@ async def setup_bot():
     app.add_handler(CommandHandler("adduser", adduser_command))
     app.add_handler(CommandHandler("removeuser", removeuser_command))
     app.add_handler(CommandHandler("listusers", listusers_command))
+    app.add_handler(CommandHandler("adminekle", adminekle_command))
+    app.add_handler(CommandHandler("adminsil", adminsil_command))
+    app.add_handler(CommandHandler("listadmins", listadmins_command))
     
     # Genel mesaj handler'ı
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -778,7 +976,7 @@ def format_price(price, ref_price=None):
         else:
             return f"{price:.10f}".rstrip('0').rstrip('.')
 
-def create_signal_message(symbol, price, signals, volume, profit_percent=3.0, stop_percent=2.5):
+def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)
     signal_4h = "ALIŞ" if signals.get('4h', 0) == 1 else "SATIŞ"
@@ -822,6 +1020,55 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=3.0, st
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""
 
     return message, dominant_signal, target_price, stop_loss, stop_loss_str
+
+def create_special_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0):
+    """Özel yıldızlı sinyal mesajını oluştur"""
+    price_str = format_price(price, price)
+    volume_str = f"{volume:,.0f}" if volume else "N/A"
+    
+    # Sinyal türünü belirle
+    signal_values = [signals.get(tf, 0) for tf in ['1h', '2h', '4h', '8h', '12h']]
+    buy_count = sum(1 for s in signal_values if s == 1)
+    sell_count = sum(1 for s in signal_values if s == -1)
+    
+    if buy_count == 5:
+        signal_type = "ALIŞ"
+        emoji = "🚀"
+        target_price = price * (1 + profit_percent / 100)
+        stop_loss = price * (1 - stop_percent / 100)
+    elif sell_count == 5:
+        signal_type = "SATIŞ"
+        emoji = "📉"
+        target_price = price * (1 - profit_percent / 100)
+        stop_loss = price * (1 + stop_percent / 100)
+    else:
+        return None
+    
+    target_str = format_price(target_price, price)
+    stop_str = format_price(stop_loss, price)
+    
+    # Yıldızlı özel mesaj formatı
+    message = f"""
+⭐️ <b>YILDIZLI ÖZEL SİNYAL</b> ⭐️
+
+{emoji} <b>{symbol}</b> - <b>{signal_type}</b>
+
+💰 <b>Giriş Fiyatı:</b> {price_str}
+🎯 <b>Hedef:</b> {target_str} (+{profit_percent}%)
+🛑 <b>Stop Loss:</b> {stop_str} (-{stop_percent}%)
+⚡ <b>Kaldıraç:</b> 20x
+📊 <b>Hacim (24h):</b> ${volume_str}
+
+⏰ <b>Zaman Dilimleri:</b> 1h + 2h + 4h + 8h + 12h
+🎯 <b>Filtre:</b> 5/5 (Tüm zaman dilimleri uyumlu)
+
+<b>⚠️ ÖZEL SİNYAL - 24 saatte sadece 1 kez!</b>
+<b>🚀 Yüksek başarı oranı bekleniyor!</b>
+
+#ÖzelSinyal #YıldızlıSinyal #5ZamanDilimi
+"""
+    
+    return message, signal_type, target_price, stop_loss, stop_str
 
 async def get_24h_volume_usd(symbol):
     """Binance Futures'den 24 saatlik USD hacmini çek"""
@@ -875,20 +1122,30 @@ async def async_get_historical_data(symbol, interval, lookback):
 
 def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     """
-    Pine Script'e birebir uyumlu AL/SAT sinyal hesaplaması.
-    Zaman dilimine göre özel parametreler içerir.
+    Kriptotek Nokta Atışı Pivot - Pine Script'e birebir uyumlu AL/SAT sinyal hesaplaması.
+    Zaman dilimine göre dinamik parametreler içerir.
     """
-    # --- Zaman dilimine göre sabit parametreler ---
-    if timeframe == '4h':
-        rsi_length = 18
-        macd_fast = 11
-        macd_slow = 22
-        macd_signal = 8
-        short_ma_period = 12
-        long_ma_period = 60
-        mfi_length = 16
-        fib_lookback = 70
-    elif timeframe == '1d':
+    # --- Zaman dilimine göre dinamik parametreler ---
+    is_higher_tf = timeframe in ['1d', '4h', '1w']
+    is_weekly = timeframe == '1w'
+    is_daily = timeframe == '1d' 
+    is_4h = timeframe == '4h'
+    
+    # Dinamik parametreler (Pine Script'teki gibi)
+    if is_weekly:
+        rsi_length = 28
+        macd_fast = 18
+        macd_slow = 36
+        macd_signal = 12
+        short_ma_period = 30
+        long_ma_period = 150
+        mfi_length = 25
+        fib_lookback = 150
+        atr_period = 7
+        volume_multiplier = 0.15
+        rsi_overbought = 60
+        rsi_oversold = 40
+    elif is_daily:
         rsi_length = 21
         macd_fast = 13
         macd_slow = 26
@@ -897,11 +1154,37 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
         long_ma_period = 100
         mfi_length = 20
         fib_lookback = 100
+        atr_period = 7
+        volume_multiplier = 0.15
+        rsi_overbought = 60
+        rsi_oversold = 40
+    elif is_4h:
+        rsi_length = 18
+        macd_fast = 11
+        macd_slow = 22
+        macd_signal = 8
+        short_ma_period = 12
+        long_ma_period = 60
+        mfi_length = 16
+        fib_lookback = 70
+        atr_period = 7
+        volume_multiplier = 0.15
+        rsi_overbought = 60
+        rsi_oversold = 40
     else:
-        raise ValueError(f"Desteklenmeyen zaman dilimi: {timeframe}")
-
-    atr_period = 10
-    atr_multiplier = 3
+        # Küçük zaman dilimleri (15m, 30m, 1h, 2h, 8h, 12h)
+        rsi_length = 14
+        macd_fast = 10
+        macd_slow = 20
+        macd_signal = 9
+        short_ma_period = 9
+        long_ma_period = 50
+        mfi_length = 14
+        fib_lookback = 50
+        atr_period = 10
+        volume_multiplier = 0.4
+        rsi_overbought = 60
+        rsi_oversold = 40
 
     # EMA 200 ve trend
     df['ema200'] = ta.trend.EMAIndicator(df['close'], window=200).ema_indicator()
@@ -910,31 +1193,50 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
 
     # RSI
     df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=rsi_length).rsi()
-    rsi_overbought = 60
-    rsi_oversold = 40
 
     # MACD
     macd = ta.trend.MACD(df['close'], window_slow=macd_slow, window_fast=macd_fast, window_sign=macd_signal)
     df['macd'] = macd.macd()
     df['macd_signal'] = macd.macd_signal()
 
-    # Supertrend sabit değerlerle
-    def supertrend(df, atr_period, multiplier):
+    # Dinamik Supertrend (Pine Script'teki gibi)
+    def supertrend_dynamic(df, atr_period, timeframe):
         hl2 = (df['high'] + df['low']) / 2
         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=atr_period).average_true_range()
-        upperband = hl2 + (multiplier * atr)
-        lowerband = hl2 - (multiplier * atr)
+        atr_dynamic = atr.rolling(window=5).mean()  # SMA(ATR, 5)
+        
+        # Dinamik multiplier (Pine Script'teki gibi)
+        if is_weekly:
+            multiplier = atr_dynamic / 2
+        elif is_daily:
+            multiplier = atr_dynamic / 1.2
+        elif is_4h:
+            multiplier = atr_dynamic / 1.3
+        else:
+            multiplier = atr_dynamic / 1.5
+            
+        upperband = hl2 + multiplier
+        lowerband = hl2 - multiplier
         direction = [1]
+        supertrend_values = [lowerband.iloc[0]]
+        
         for i in range(1, len(df)):
             if df['close'].iloc[i] > upperband.iloc[i-1]:
                 direction.append(1)
+                supertrend_values.append(lowerband.iloc[i])
             elif df['close'].iloc[i] < lowerband.iloc[i-1]:
                 direction.append(-1)
+                supertrend_values.append(upperband.iloc[i])
             else:
                 direction.append(direction[-1])
-        return pd.Series(direction, index=df.index)
+                if direction[-1] == 1:
+                    supertrend_values.append(lowerband.iloc[i])
+                else:
+                    supertrend_values.append(upperband.iloc[i])
 
-    df['supertrend_dir'] = supertrend(df, atr_period, atr_multiplier)
+        return pd.Series(direction, index=df.index), pd.Series(supertrend_values, index=df.index)
+
+    df['supertrend_dir'], df['supertrend'] = supertrend_dynamic(df, atr_period, timeframe)
 
     # MA'lar
     df['short_ma'] = ta.trend.EMAIndicator(df['close'], window=short_ma_period).ema_indicator()
@@ -942,11 +1244,39 @@ def calculate_full_pine_signals(df, timeframe, fib_filter_enabled=False):
     df['ma_bullish'] = df['short_ma'] > df['long_ma']
     df['ma_bearish'] = df['short_ma'] < df['long_ma']
 
-    # Hacim & MFI
-    df['volume_ma'] = df['volume'].rolling(window=20).mean()
-    df['enough_volume'] = df['volume'] > df['volume_ma'] * 0.4
+    # Hacim Analizi (Pine Script'teki gibi)
+    volume_ma_period = 20
+    df['volume_ma'] = df['volume'].rolling(window=volume_ma_period).mean()
+    df['enough_volume'] = df['volume'] > df['volume_ma'] * volume_multiplier
 
-    df['mfi'] = ta.volume.MFIIndicator(df['high'], df['low'], df['close'], df['volume'], window=mfi_length).money_flow_index()
+    # Para Akışı Endeksi (MFI) - Pine Script'teki mantıkla
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    money_flow = typical_price * df['volume']
+    
+    positive_flow = []
+    negative_flow = []
+    
+    for i in range(len(df)):
+        if i == 0:
+            positive_flow.append(0)
+            negative_flow.append(0)
+        else:
+            if typical_price.iloc[i] > typical_price.iloc[i-1]:
+                positive_flow.append(money_flow.iloc[i])
+                negative_flow.append(0)
+            elif typical_price.iloc[i] < typical_price.iloc[i-1]:
+                positive_flow.append(0)
+                negative_flow.append(money_flow.iloc[i])
+            else:
+                positive_flow.append(0)
+                negative_flow.append(0)
+    
+    positive_flow_sum = pd.Series(positive_flow).rolling(window=mfi_length).sum()
+    negative_flow_sum = pd.Series(negative_flow).rolling(window=mfi_length).sum()
+    
+    # MFI hesaplama
+    money_ratio = positive_flow_sum / (negative_flow_sum + 1e-10)  # Sıfıra bölmeyi önle
+    df['mfi'] = 100 - (100 / (1 + money_ratio))
     df['mfi_bullish'] = df['mfi'] < 65
     df['mfi_bearish'] = df['mfi'] > 35
 
@@ -1067,18 +1397,62 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
             continue
         idx += 1
 
-    # Sembolleri grup halinde yazdır
-    if uygun_pairs:
+    # Sembolleri sadece ilk çalıştığında yazdır
+    if uygun_pairs and not hasattr(get_active_high_volume_usdt_pairs, '_first_run'):
         print("📋 İşlenecek semboller:")
         # 10'arlı gruplar halinde yazdır
         for i in range(0, len(uygun_pairs), 10):
             group = uygun_pairs[i:i+10]
             group_str = ", ".join(group)
             print(f"   {group_str}")
+        # İlk çalıştırma işaretini koy
+        get_active_high_volume_usdt_pairs._first_run = True
     
     return uygun_pairs
 
-async def process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent):
+async def check_special_signal(symbol, special_timeframes, special_tf_names):
+    """Özel sinyal kontrolü - 5 zaman diliminde aynı sinyal"""
+    try:
+        # 5 timeframe verilerini çek
+        current_signals = dict()
+        for tf_name in special_tf_names:
+            try:
+                df = await async_get_historical_data(symbol, special_timeframes[tf_name], 1000)
+                df = calculate_full_pine_signals(df, tf_name)
+                
+                # En yakın mumun sinyalini al
+                current_time = datetime.now()
+                closest_idx = df['timestamp'].searchsorted(current_time)
+                if closest_idx < len(df):
+                    signal = int(df.iloc[closest_idx]['signal'])
+                    # Sinyal 0 ise MACD ile düzelt
+                    if signal == 0:
+                        if df['macd'].iloc[closest_idx] > df['macd_signal'].iloc[closest_idx]:
+                            signal = 1
+                        else:
+                            signal = -1
+                    current_signals[tf_name] = signal
+                else:
+                    current_signals[tf_name] = 0
+            except Exception as e:
+                return None  # Hata varsa özel sinyal yok
+        
+        # 5/5 şartı kontrolü - tüm zaman dilimleri aynı sinyali vermeli
+        signal_values = [current_signals.get(tf, 0) for tf in special_tf_names]
+        buy_count = sum(1 for s in signal_values if s == 1)
+        sell_count = sum(1 for s in signal_values if s == -1)
+        
+        if buy_count == 5:  # 5/5 ALIŞ
+            return "ALIS", current_signals
+        elif sell_count == 5:  # 5/5 SATIŞ
+            return "SATIS", current_signals
+        else:
+            return None  # 5/5 şartı sağlanmadı
+            
+    except Exception as e:
+        return None
+
+async def process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent, changed_symbols):
     # Debug log
     # print(f"🔍 {symbol} işleniyor...")  # Debug mesajını kaldır
     
@@ -1086,23 +1460,23 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
     if symbol in positions:
         # print(f"⏸️ {symbol} zaten pozisyon açık, atlanıyor")  # Debug mesajını kaldır
         return
-    # Stop sonrası 1 saatlik cooldown kontrolü
+    # Stop sonrası 4 saatlik cooldown kontrolü (Backtest ile aynı)
     if symbol in stop_cooldown:
         last_stop = stop_cooldown[symbol]
-        if (datetime.now() - last_stop) < timedelta(hours=1):
-            return  # 1 saat dolmadıysa sinyal arama
+        if (datetime.now() - last_stop) < timedelta(hours=4):
+            return  # 4 saat dolmadıysa sinyal arama
         else:
-            del stop_cooldown[symbol]  # 1 saat dolduysa tekrar sinyal aranabilir
-    # Başarılı/başarısız sinyal sonrası 1 saatlik cooldown kontrolü
+            del stop_cooldown[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
+    # Başarılı/başarısız sinyal sonrası 4 saatlik cooldown kontrolü (Backtest ile aynı)
     for sdict in [successful_signals, failed_signals]:
         if symbol in sdict:
             last_time = sdict[symbol].get("completion_time")
             if last_time:
                 last_time_dt = datetime.fromisoformat(last_time)
-                if (datetime.now() - last_time_dt) < timedelta(hours=1):
-                    return  # 1 saat dolmadıysa sinyal arama
+                if (datetime.now() - last_time_dt) < timedelta(hours=4):
+                    return  # 4 saat dolmadıysa sinyal arama
                 else:
-                    del sdict[symbol]  # 1 saat dolduysa tekrar sinyal aranabilir
+                    del sdict[symbol]  # 4 saat dolduysa tekrar sinyal aranabilir
     # 1d'lik veri kontrolü
     try:
         df_1d = await async_get_historical_data(symbol, timeframes['1d'], 30)
@@ -1112,20 +1486,27 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
     except Exception as e:
         # print(f"UYARI: {symbol} için 1d veri çekilemedi: {str(e)}")  # Debug mesajını kaldır
         return
-    # Mevcut sinyalleri al
+    # Mevcut sinyalleri al (Backtest ile aynı mantık - henüz kapanmamış mumlar)
     current_signals = dict()
     for tf_name in tf_names:
         try:
             df = await async_get_historical_data(symbol, timeframes[tf_name], 1000)
             df = calculate_full_pine_signals(df, tf_name)
-            signal = int(df['signal'].iloc[-1])
-            # Sinyal 0 ise MACD ile düzelt
-            if signal == 0:
-                if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
-                    signal = 1
-                else:
-                    signal = -1
-            current_signals[tf_name] = signal
+            
+            # Backtest ile aynı: En yakın mumun sinyalini al (henüz kapanmamış olabilir)
+            current_time = datetime.now()
+            closest_idx = df['timestamp'].searchsorted(current_time)
+            if closest_idx < len(df):
+                signal = int(df.iloc[closest_idx]['signal'])
+                # Sinyal 0 ise MACD ile düzelt
+                if signal == 0:
+                    if df['macd'].iloc[closest_idx] > df['macd_signal'].iloc[closest_idx]:
+                        signal = 1
+                    else:
+                        signal = -1
+                current_signals[tf_name] = signal
+            else:
+                current_signals[tf_name] = 0
             # print(f"📊 {symbol} - {tf_name}: {signal}")  # Debug mesajını kaldır
         except Exception as e:
             # print(f"Hata: {symbol} - {tf_name} - {str(e)}")  # Debug mesajını kaldır
@@ -1133,81 +1514,111 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
     # İlk çalıştırmada sadece sinyalleri kaydet
     if not previous_signals.get(symbol):
         previous_signals[symbol] = current_signals.copy()
-        # print(f"🔄 İlk çalıştırma - {symbol} sinyalleri kaydedildi: {current_signals}")  # Debug mesajını kaldır
         # Kaydedilen sinyalleri ekranda göster
         signal_str = ', '.join([f'{tf}: {current_signals[tf]}' for tf in tf_names])
         print(f"📊 {symbol} ({signal_str})")
-        signal_changed = False  # İlk çalıştırmada sinyal gönderme
         return  # İlk çalıştırmada sadece kaydet, sinyal gönderme
+    
     # İlk çalıştırma değilse, değişiklik kontrolü yap
-    else:
-        prev_signals = previous_signals[symbol]
-        signal_changed = False
-        for tf in tf_names:
-            if prev_signals[tf] != current_signals[tf]:
-                signal_changed = True
-                print(f"🔄 {symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
-                break
-        if not signal_changed:
-            # print(f"⏸️ {symbol} sinyal değişikliği yok, atlanıyor")  # Debug mesajını kaldır
-            previous_signals[symbol] = current_signals.copy()
-            return  # Değişiklik yoksa devam et
-
-    # Sinyal değişikliği varsa devam et (ilk çalıştırma değil)
+    prev_signals = previous_signals[symbol]
+    signal_changed = False
+    
+    # Sinyal değişikliği kontrolü
+    for tf in tf_names:
+        if prev_signals[tf] != current_signals[tf]:
+            signal_changed = True
+            print(f"🔄 {symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
+            break
+    
+    # Değişiklik varsa changed_symbols'a ekle
     if signal_changed:
-        # --- 2 ZAMAN DİLİMİ ŞARTI (4h-1d) ---
+        changed_symbols.add(symbol)
+        print(f"✅ {symbol} değişiklik yaşadı, sinyal aramaya başlayabilir")
+    
+    # Sadece değişiklik yaşayan semboller için sinyal kontrolü yap
+    if symbol not in changed_symbols:
+        previous_signals[symbol] = current_signals.copy()
+        return  # Değişiklik yaşamayan semboller için sinyal arama
+    
+    # Değişiklik yaşayan semboller için sinyal kontrolü
+        # --- 3 ZAMAN DİLİMİ ŞARTI (1h+2h+1d) ---
         signal_values = [current_signals.get(tf, 0) for tf in tf_names]
         
-        # 2/2 şartı - tüm zaman dilimleri aynı sinyali vermeli
+        # 3/3 şartı - tüm zaman dilimleri aynı sinyali vermeli
         buy_count = sum(1 for s in signal_values if s == 1)
         sell_count = sum(1 for s in signal_values if s == -1)
         
         # print(f"📊 {symbol} sinyal sayıları: ALIŞ={buy_count}, SATIŞ={sell_count}")  # Debug mesajını kaldır
         
-        if buy_count == 2:  # 2/2 ALIŞ
+        if buy_count == 3:  # 3/3 ALIŞ
             sinyal_tipi = 'ALIS'
-            leverage = 10
-            print(f"🚨 {symbol} ALIŞ sinyali bulundu!")
-        elif sell_count == 2:  # 2/2 SATIŞ
+            leverage = 10  # Varsayılan kaldıraç
+            print(f"🚨 {symbol} ALIŞ sinyali bulundu! (3/3)")
+            
+            # 8h kontrolü - 4/3 kuralı
+            try:
+                df_8h = await async_get_historical_data(symbol, '8h', 1000)
+                df_8h = calculate_full_pine_signals(df_8h, '8h')
+                current_time = datetime.now()
+                closest_idx_8h = df_8h['timestamp'].searchsorted(current_time)
+                if closest_idx_8h < len(df_8h):
+                    signal_8h = int(df_8h.iloc[closest_idx_8h]['signal'])
+                    if signal_8h == 0:
+                        if df_8h['macd'].iloc[closest_idx_8h] > df_8h['macd_signal'].iloc[closest_idx_8h]:
+                            signal_8h = 1
+                        else:
+                            signal_8h = -1
+                    
+                    if signal_8h == 1:  # 8h da da ALIŞ
+                        leverage = 15  # 4/3 kuralı - kaldıraç artır
+                        print(f"🚀 {symbol} 8h da da ALIŞ! Kaldıraç 15x'e yükseltildi!")
+                    else:
+                        print(f"📊 {symbol} 8h da ALIŞ değil, 10x kaldıraç korundu")
+            except Exception as e:
+                print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
+                
+        elif sell_count == 3:  # 3/3 SATIŞ
             sinyal_tipi = 'SATIS'
-            leverage = 10
-            print(f"🚨 {symbol} SATIŞ sinyali bulundu!")
+            leverage = 10  # Varsayılan kaldıraç
+            print(f"🚨 {symbol} SATIŞ sinyali bulundu! (3/3)")
+            
+            # 8h kontrolü - 4/3 kuralı
+            try:
+                df_8h = await async_get_historical_data(symbol, '8h', 1000)
+                df_8h = calculate_full_pine_signals(df_8h, '8h')
+                current_time = datetime.now()
+                closest_idx_8h = df_8h['timestamp'].searchsorted(current_time)
+                if closest_idx_8h < len(df_8h):
+                    signal_8h = int(df_8h.iloc[closest_idx_8h]['signal'])
+                    if signal_8h == 0:
+                        if df_8h['macd'].iloc[closest_idx_8h] > df_8h['macd_signal'].iloc[closest_idx_8h]:
+                            signal_8h = 1
+                        else:
+                            signal_8h = -1
+                    
+                    if signal_8h == -1:  # 8h da da SATIŞ
+                        leverage = 15  # 4/3 kuralı - kaldıraç artır
+                        print(f"🚀 {symbol} 8h da da SATIŞ! Kaldıraç 15x'e yükseltildi!")
+                    else:
+                        print(f"📊 {symbol} 8h da SATIŞ değil, 10x kaldıraç korundu")
+            except Exception as e:
+                print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
         else:
-            # print(f"❌ {symbol} 2/2 şartı sağlanmadı, atlanıyor")  # Debug mesajını kaldır
+            # print(f"❌ {symbol} 3/3 şartı sağlanmadı, atlanıyor")  # Debug mesajını kaldır
             previous_signals[symbol] = current_signals.copy()
             return
         
         # Sinyal onay kuralları kaldırıldı - direkt devam et
         
-        # 1 saatlik cooldown kontrolü
+        # 4 saatlik cooldown kontrolü (Backtest ile aynı)
         cooldown_key = (symbol, sinyal_tipi)
         if cooldown_key in cooldown_signals:
-            cooldown_data = cooldown_signals[cooldown_key]
-            last_time = cooldown_data["datetime"]
-            locked_signals = cooldown_data["signals"]
-            
-            # 1 saat geçti mi kontrol et
-            if (datetime.now() - last_time) < timedelta(hours=1):
-                # Cooldown süresi dolmamış
-                previous_signals[symbol] = current_signals.copy()
-                return
-            
-            # 1 saat geçti, sinyal değerleri değişti mi kontrol et
-            signals_changed = False
-            for tf in tf_names:
-                if locked_signals.get(tf) != current_signals.get(tf):
-                    signals_changed = True
-                    print(f"🔄 {symbol} sinyal değişti: {tf} {locked_signals.get(tf)} -> {current_signals.get(tf)}")
-                    break
-            
-            if not signals_changed:
-                print(f"⏸️ {symbol} cooldown süresi doldu ama sinyal değerleri değişmedi, bekleniyor...")
+            last_time = cooldown_signals[cooldown_key]
+            if (datetime.now() - last_time) < timedelta(hours=4):
                 previous_signals[symbol] = current_signals.copy()
                 return
             else:
-                # Sinyal değerleri değişti, cooldown'ı kaldır
                 del cooldown_signals[cooldown_key]
-                print(f"✅ {symbol} cooldown kaldırıldı, yeni sinyal aranabilir")
         # Aynı sinyal daha önce gönderilmiş mi kontrol et
         signal_key = (symbol, sinyal_tipi)
         if sent_signals.get(signal_key) == signal_values:
@@ -1223,12 +1634,12 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
             dominant_signal = "SATIŞ"
         
         # Fiyat ve USD hacmini çek
-        df = await async_get_historical_data(symbol, '4h', 1)
+        df = await async_get_historical_data(symbol, '1h', 1)
         price = float(df['close'].iloc[-1])
         volume_usd = await get_24h_volume_usd(symbol)  # 24 saatlik USD hacmi
         message, _, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent)
 
-        # Pozisyonu kaydet (her durumda)
+        # Pozisyonu kaydet (Backtest ile aynı format)
         positions[symbol] = {
             "type": dominant_signal,
             "target": float(target_price),
@@ -1237,7 +1648,8 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
             "stop_str": stop_loss_str,
             "signals": current_signals,
             "leverage": leverage,
-            "entry_time": str(datetime.now())
+            "entry_time": str(datetime.now()),
+            "entry_timestamp": datetime.now()  # Backtest ile uyumlu
         }
 
         # Aktif sinyal olarak kaydet (her durumda)
@@ -1270,14 +1682,15 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
     # Profit/Stop parametreleri (backtest ile aynı)
-    profit_percent = 3.0
-    stop_percent = 2.5
+    profit_percent = 1.5
+    stop_percent = 1.0
     
     sent_signals = dict()  # {(symbol, sinyal_tipi): signal_values}
     positions = dict()  # {symbol: position_info}
-    cooldown_signals = dict()  # {(symbol, sinyal_tipi): {"datetime": datetime, "signals": {tf: signal}}}
+    cooldown_signals = dict()  # {(symbol, sinyal_tipi): datetime} (Backtest ile aynı)
     stop_cooldown = dict()  # {symbol: datetime}
     previous_signals = dict()  # {symbol: {tf: signal}} - İlk çalıştığında kaydedilen sinyaller
+    changed_symbols = set()  # Değişiklik yaşayan semboller (sinyal aramaya başlayabilir)
     stopped_coins = dict()  # {symbol: {...}}
     active_signals = dict()  # {symbol: {...}} - Aktif sinyaller
     successful_signals = dict()  # {symbol: {...}} - Başarılı sinyaller (hedefe ulaşan)
@@ -1294,23 +1707,40 @@ async def signal_processing_loop():
         "tracked_coins_count": 0
     }
     
+    # Normal sinyal için timeframe'ler
     timeframes = {
-        '4h': '4h',
+        '1h': '1h',
+        '2h': '2h',
         '1d': '1d'
     }
-    tf_names = ['4h', '1d']  # 4h-1d kombinasyonu 
+    tf_names = ['1h', '2h', '1d']  # 1h+2h+1d kombinasyonu
+    
+    # Özel sinyal için timeframe'ler (5 zaman dilimi)
+    special_timeframes = {
+        '1h': '1h',
+        '2h': '2h',
+        '4h': '4h',
+        '8h': '8h',
+        '12h': '12h'
+    }
+    special_tf_names = ['1h', '2h', '4h', '8h', '12h']  # Özel sinyal için 5 zaman dilimi
+    
+    # Özel sinyal kontrol değişkenleri
+    special_signal_sent = False  # 24 saatte sadece 1 kez özel sinyal
+    special_signal_time = None   # Son özel sinyal zamanı
+    special_signal_active = False  # Özel sinyal aktif mi?
+    special_signal_symbol = None   # Aktif özel sinyal sembolü 
     
     print("🚀 Bot başlatıldı!")
     print("⏰ İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
     
     while True:
         try:
-            # Aktif pozisyonları kontrol etmeye devam et
+            # Aktif pozisyonları kontrol etmeye devam et (Backtest ile aynı mantık)
             for symbol, pos in list(positions.items()):
                     try:
-                        df = await async_get_historical_data(symbol, '4h', 1)  # Son 1 mumu al
+                        df = await async_get_historical_data(symbol, '1h', 1)  # Son 1 mumu al
                         last_price = float(df['close'].iloc[-1])
-                        current_open = float(df['open'].iloc[-1])
                         current_high = float(df['high'].iloc[-1])
                         current_low = float(df['low'].iloc[-1])
                         
@@ -1320,18 +1750,17 @@ async def signal_processing_loop():
                             active_signals[symbol]["current_price_float"] = last_price
                             active_signals[symbol]["last_update"] = str(datetime.now())
                         
+                        # Backtest ile aynı: 1h mumunun high/low değerlerine bak
                         if pos["type"] == "ALIŞ":
-                            # Hedef kontrolü: High fiyatı hedefe ulaştı mı? (daha hassas)
+                            # Hedef kontrolü: High fiyatı hedefe ulaştı mı? (Backtest ile aynı)
                             if current_high >= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "ALIS")] = {
-                                    "datetime": datetime.now(),
-                                    "signals": pos["signals"]
-                                }
+                                cooldown_signals[(symbol, "ALIS")] = datetime.now()
                                 
                                 # Başarılı sinyal olarak kaydet
-                                profit_usd = 100 * (profit_percent / 100) * 10
+                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
+                                profit_usd = 100 * (profit_percent / 100) * leverage
                                 successful_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
@@ -1344,7 +1773,7 @@ async def signal_processing_loop():
                                     "status": "SUCCESS",
                                     "profit_percent": round(profit_percent, 2),
                                     "profit_usd": round(profit_usd, 2),
-                                    "leverage": pos.get("leverage", 1),
+                                    "leverage": leverage,
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
@@ -1357,14 +1786,11 @@ async def signal_processing_loop():
                                     del active_signals[symbol]
                                 
                                 del positions[symbol]
-                            # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (daha hassas)
+                            # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (Backtest ile aynı)
                             elif current_low <= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "ALIS")] = {
-                                    "datetime": datetime.now(),
-                                    "signals": pos["signals"]
-                                }
+                                cooldown_signals[(symbol, "ALIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
                                 
                                 # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
@@ -1383,7 +1809,8 @@ async def signal_processing_loop():
                                 
                                 # Başarısız sinyal olarak kaydet
                                 loss_percent = -stop_percent
-                                loss_usd = -100 * (stop_percent / 100) * 10
+                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
+                                loss_usd = -100 * (stop_percent / 100) * leverage
                                 failed_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
@@ -1396,7 +1823,7 @@ async def signal_processing_loop():
                                     "status": "FAILED",
                                     "loss_percent": round(loss_percent, 2),
                                     "loss_usd": round(loss_usd, 2),
-                                    "leverage": pos.get("leverage", 1),
+                                    "leverage": leverage,
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
@@ -1410,17 +1837,15 @@ async def signal_processing_loop():
                                 
                                 del positions[symbol]
                         elif pos["type"] == "SATIŞ":
-                            # Hedef kontrolü: Low fiyatı hedefe ulaştı mı? (daha hassas)
+                            # Hedef kontrolü: Low fiyatı hedefe ulaştı mı? (Backtest ile aynı)
                             if current_low <= pos["target"]:
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "SATIS")] = {
-                                    "datetime": datetime.now(),
-                                    "signals": pos["signals"]
-                                }
+                                cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 
                                 # Başarılı sinyal olarak kaydet
-                                profit_usd = 100 * (profit_percent / 100) * 10
+                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
+                                profit_usd = 100 * (profit_percent / 100) * leverage
                                 successful_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
@@ -1433,7 +1858,7 @@ async def signal_processing_loop():
                                     "status": "SUCCESS",
                                     "profit_percent": round(profit_percent, 2),
                                     "profit_usd": round(profit_usd, 2),
-                                    "leverage": pos.get("leverage", 1),
+                                    "leverage": leverage,
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
@@ -1446,14 +1871,11 @@ async def signal_processing_loop():
                                     del active_signals[symbol]
                                 
                                 del positions[symbol]
-                            # Stop kontrolü: High fiyatı stop'a ulaştı mı? (daha hassas)
+                            # Stop kontrolü: High fiyatı stop'a ulaştı mı? (Backtest ile aynı)
                             elif current_high >= pos["stop"]:
                                 msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
                                 await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "SATIS")] = {
-                                    "datetime": datetime.now(),
-                                    "signals": pos["signals"]
-                                }
+                                cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
                                 
                                 # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
@@ -1472,20 +1894,20 @@ async def signal_processing_loop():
                                 
                                 # Başarısız sinyal olarak kaydet
                                 loss_percent = -stop_percent
-                                loss_usd = -100 * (stop_percent / 100) * 10
+                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
+                                loss_usd = -100 * (stop_percent / 100) * leverage
                                 failed_signals[symbol] = {
                                     "symbol": symbol,
                                     "type": pos["type"],
                                     "entry_price": format_price(pos["open_price"], pos["open_price"]),
                                     "exit_price": format_price(last_price, pos["open_price"]),
-                                    "target_price": format_price(pos["target"], pos["open_price"]),
                                     "stop_loss": format_price(pos["stop"], pos["open_price"]),
                                     "signals": pos["signals"],
                                     "completion_time": str(datetime.now()),
                                     "status": "FAILED",
                                     "loss_percent": round(loss_percent, 2),
                                     "loss_usd": round(loss_usd, 2),
-                                    "leverage": pos.get("leverage", 1),
+                                    "leverage": leverage,
                                     "entry_time": pos.get("entry_time", str(datetime.now())),
                                     "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
                                 }
@@ -1522,9 +1944,95 @@ async def signal_processing_loop():
             
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
 
-            tasks = [process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent) for symbol in symbols]
+            tasks = [process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent, changed_symbols) for symbol in symbols]
             await asyncio.gather(*tasks)
             # print("✅ Sinyal arama tamamlandı")  # Debug mesajını kaldır
+            
+            # ÖZEL SİNYAL KONTROLÜ
+            if not special_signal_active:  # Aktif özel sinyal yoksa kontrol et
+                # 24 saat kontrolü
+                can_send_special = True
+                if special_signal_time:
+                    time_diff = (datetime.now() - special_signal_time).total_seconds() / 3600
+                    if time_diff < 24:
+                        can_send_special = False
+                        print(f"⏰ Özel sinyal için 24 saat dolmadı: {24 - time_diff:.1f} saat kaldı")
+                
+                if can_send_special:
+                    print("🔍 Özel sinyal aranıyor (5/5 kuralı)...")
+                    for symbol in symbols:
+                        # Özel sinyal kontrolü
+                        special_result = await check_special_signal(symbol, special_timeframes, special_tf_names)
+                        if special_result:
+                            sinyal_tipi, special_signals = special_result
+                            print(f"⭐️ YILDIZLI ÖZEL SİNYAL BULUNDU! {symbol} - {sinyal_tipi}")
+                            
+                            # Fiyat ve hacim bilgilerini al
+                            try:
+                                df = await async_get_historical_data(symbol, '1h', 1)
+                                price = float(df['close'].iloc[-1])
+                                volume_usd = await get_24h_volume_usd(symbol)
+                                
+                                # Özel sinyal mesajını oluştur
+                                message, signal_type, target_price, stop_loss, stop_str = create_special_signal_message(symbol, price, special_signals, volume_usd, profit_percent, stop_percent)
+                                
+                                if message:
+                                    # Özel sinyal pozisyonunu kaydet (20x kaldıraç)
+                                    positions[symbol] = {
+                                        "type": signal_type,
+                                        "target": float(target_price),
+                                        "stop": float(stop_loss),
+                                        "open_price": float(price),
+                                        "stop_str": stop_str,
+                                        "signals": special_signals,
+                                        "leverage": 20,  # Özel sinyal için 20x
+                                        "entry_time": str(datetime.now()),
+                                        "entry_timestamp": datetime.now(),
+                                        "is_special": True  # Özel sinyal işareti
+                                    }
+                                    
+                                    # Aktif sinyal olarak kaydet
+                                    active_signals[symbol] = {
+                                        "symbol": symbol,
+                                        "type": signal_type,
+                                        "entry_price": format_price(price, price),
+                                        "entry_price_float": price,
+                                        "target_price": format_price(target_price, price),
+                                        "stop_loss": format_price(stop_loss, price),
+                                        "signals": special_signals,
+                                        "leverage": 20,
+                                        "signal_time": str(datetime.now()),
+                                        "current_price": format_price(price, price),
+                                        "current_price_float": price,
+                                        "last_update": str(datetime.now()),
+                                        "is_special": True
+                                    }
+                                    
+                                    # İstatistikleri güncelle
+                                    stats["total_signals"] += 1
+                                    stats["active_signals_count"] = len(active_signals)
+                                    
+                                    # Özel sinyal mesajını gönder
+                                    await send_signal_to_all_users(message)
+                                    
+                                    # Özel sinyal durumunu güncelle
+                                    special_signal_sent = True
+                                    special_signal_time = datetime.now()
+                                    special_signal_active = True
+                                    special_signal_symbol = symbol
+                                    
+                                    print(f"⭐️ Özel sinyal gönderildi: {symbol}")
+                                    break  # Sadece 1 özel sinyal
+                                    
+                            except Exception as e:
+                                print(f"Özel sinyal işleme hatası: {symbol} - {str(e)}")
+                                continue
+            else:
+                # Aktif özel sinyal varsa, kapanıp kapanmadığını kontrol et
+                if special_signal_symbol and special_signal_symbol not in positions:
+                    print(f"⭐️ Özel sinyal kapandı: {special_signal_symbol}")
+                    special_signal_active = False
+                    special_signal_symbol = None
         
             # Aktif sinyallerin fiyatlarını güncelle
             for symbol in list(active_signals.keys()):
@@ -1546,11 +2054,14 @@ async def signal_processing_loop():
             stats["tracked_coins_count"] = len(tracked_coins)
             
             # Global değişkenleri güncelle (bot komutları için)
-            global global_stats, global_active_signals, global_successful_signals, global_failed_signals
+            global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_changed_symbols, global_allowed_users, global_admin_users
             global_stats = stats.copy()
             global_active_signals = active_signals.copy()
             global_successful_signals = successful_signals.copy()
             global_failed_signals = failed_signals.copy()
+            global_changed_symbols = changed_symbols.copy()
+            global_allowed_users = ALLOWED_USERS.copy()
+            global_admin_users = ADMIN_USERS.copy()
             
 
             
@@ -1574,9 +2085,9 @@ async def signal_processing_loop():
                 print(f"   Başarı Oranı: %{success_rate:.1f}")
             else:
                 print(f"   Başarı Oranı: %0.0")
-            # Döngü sonunda bekleme süresi
-            print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
-            await asyncio.sleep(900)  # 15 dakika
+            # Döngü sonunda bekleme süresi (Backtest ile aynı - 10 dakika)
+            print("Tüm coinler kontrol edildi. 10 dakika bekleniyor...")
+            await asyncio.sleep(600)  # 10 dakika (Backtest'teki en iyi aralık)
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -1588,9 +2099,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(900)  # 15 dakika
-
-# test_telegram_config fonksiyonunu kaldır
+            await asyncio.sleep(600)  # 10 dakika (Backtest ile aynı)
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle

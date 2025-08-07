@@ -1505,8 +1505,17 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
                     else:
                         signal = -1
                 current_signals[tf_name] = signal
+                print(f"🔍 DEBUG: {symbol} - {tf_name} sinyali: {signal} (closest_idx: {closest_idx}, df_len: {len(df)})")
             else:
-                current_signals[tf_name] = 0
+                # Son mumu al
+                signal = int(df.iloc[-1]['signal'])
+                if signal == 0:
+                    if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]:
+                        signal = 1
+                    else:
+                        signal = -1
+                current_signals[tf_name] = signal
+                print(f"🔍 DEBUG: {symbol} - {tf_name} sinyali (son mum): {signal}")
             # print(f"📊 {symbol} - {tf_name}: {signal}")  # Debug mesajını kaldır
         except Exception as e:
             # print(f"Hata: {symbol} - {tf_name} - {str(e)}")  # Debug mesajını kaldır

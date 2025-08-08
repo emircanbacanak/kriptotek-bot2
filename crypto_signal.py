@@ -1463,7 +1463,7 @@ async def check_special_signal(symbol, special_timeframes, special_tf_names):
     except Exception as e:
         return None
 
-async def process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent, changed_symbols):
+async def process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent, changed_symbols=None):
     # Debug log
     # print(f"🔍 {symbol} işleniyor...")  # Debug mesajını kaldır
     
@@ -1529,6 +1529,7 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         except Exception as e:
             # print(f"Hata: {symbol} - {tf_name} - {str(e)}")  # Debug mesajını kaldır
             return  # Hata varsa bu coin için sinyal üretme
+    
     # İlk çalıştırmada sadece sinyalleri kaydet
     if not previous_signals.get(symbol):
         previous_signals[symbol] = current_signals.copy()
@@ -1537,165 +1538,164 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         print(f"📊 {symbol} ({signal_str})")
         return  # İlk çalıştırmada sadece kaydet, sinyal gönderme
     
-    # İlk çalıştırma değilse, değişiklik kontrolü yap
+    # İlk çalıştırma değilse, sinyal kontrolü yap
     prev_signals = previous_signals[symbol]
-    signal_changed = False
     
-    # Sinyal değişikliği kontrolü
-    for tf in tf_names:
-        if prev_signals[tf] != current_signals[tf]:
-            signal_changed = True
-            print(f"🔄 {symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
-            break
+    # 3 zaman diliminde aynı olan coinler için değişiklik kontrolü
+    signal_values = [current_signals.get(tf, 0) for tf in tf_names]
+    buy_count = sum(1 for s in signal_values if s == 1)
+    sell_count = sum(1 for s in signal_values if s == -1)
     
-    # Değişiklik varsa changed_symbols'a ekle
-    if signal_changed:
-        changed_symbols.add(symbol)
-        print(f"✅ {symbol} değişiklik yaşadı, sinyal aramaya başlayabilir")
+    # İlk çalıştırmada kaydedilen sinyalleri kontrol et
+    prev_signal_values = [prev_signals.get(tf, 0) for tf in tf_names]
+    prev_buy_count = sum(1 for s in prev_signal_values if s == 1)
+    prev_sell_count = sum(1 for s in prev_signal_values if s == -1)
     
-    # Sadece değişiklik yaşayan semboller için sinyal kontrolü yap
-    if symbol not in changed_symbols:
-        previous_signals[symbol] = current_signals.copy()
-        return  # Değişiklik yaşamayan semboller için sinyal arama
-    
-    # Değişiklik yaşayan semboller için sinyal kontrolü
-        # --- 3 ZAMAN DİLİMİ ŞARTI (1h+2h+1d) ---
-        signal_values = [current_signals.get(tf, 0) for tf in tf_names]
+    # Eğer ilk çalıştırmada 3'ü de aynıysa, değişiklik bekler
+    if (prev_buy_count == 3 or prev_sell_count == 3):
+        # Değişiklik var mı kontrol et
+        signal_changed = False
+        for tf in tf_names:
+            if prev_signals[tf] != current_signals[tf]:
+                signal_changed = True
+                print(f"🔄 {symbol} - {tf} sinyali değişti: {prev_signals[tf]} -> {current_signals[tf]}")
+                break
         
-        # 3/3 şartı - tüm zaman dilimleri aynı sinyali vermeli
-        buy_count = sum(1 for s in signal_values if s == 1)
-        sell_count = sum(1 for s in signal_values if s == -1)
+        # Değişiklik yoksa sinyal arama
+        if not signal_changed:
+            previous_signals[symbol] = current_signals.copy()
+            return
+    
+    # Sinyal kontrolü yap (3/3 şartı)
+    if buy_count == 3:  # 3/3 ALIŞ
+        sinyal_tipi = 'ALIS'
+        leverage = 10  # Varsayılan kaldıraç
+        print(f"🚨 {symbol} ALIŞ sinyali bulundu! (3/3)")
         
-        # print(f"📊 {symbol} sinyal sayıları: ALIŞ={buy_count}, SATIŞ={sell_count}")  # Debug mesajını kaldır
-        
-        if buy_count == 3:  # 3/3 ALIŞ
-            sinyal_tipi = 'ALIS'
-            leverage = 10  # Varsayılan kaldıraç
-            print(f"🚨 {symbol} ALIŞ sinyali bulundu! (3/3)")
-            
-            # 8h kontrolü - 4/3 kuralı
-            try:
-                df_8h = await async_get_historical_data(symbol, '8h', 1000)
-                df_8h = calculate_full_pine_signals(df_8h, '8h')
-                current_time = datetime.now()
-                closest_idx_8h = df_8h['timestamp'].searchsorted(current_time)
-                if closest_idx_8h < len(df_8h):
-                    signal_8h = int(df_8h.iloc[closest_idx_8h]['signal'])
-                    if signal_8h == 0:
-                        if df_8h['macd'].iloc[closest_idx_8h] > df_8h['macd_signal'].iloc[closest_idx_8h]:
-                            signal_8h = 1
-                        else:
-                            signal_8h = -1
-                    
-                    if signal_8h == 1:  # 8h da da ALIŞ
-                        leverage = 15  # 4/3 kuralı - kaldıraç artır
-                        print(f"🚀 {symbol} 8h da da ALIŞ! Kaldıraç 15x'e yükseltildi!")
+        # 8h kontrolü - 4/3 kuralı
+        try:
+            df_8h = await async_get_historical_data(symbol, '8h', 1000)
+            df_8h = calculate_full_pine_signals(df_8h, '8h')
+            current_time = datetime.now()
+            closest_idx_8h = df_8h['timestamp'].searchsorted(current_time)
+            if closest_idx_8h < len(df_8h):
+                signal_8h = int(df_8h.iloc[closest_idx_8h]['signal'])
+                if signal_8h == 0:
+                    if df_8h['macd'].iloc[closest_idx_8h] > df_8h['macd_signal'].iloc[closest_idx_8h]:
+                        signal_8h = 1
                     else:
-                        print(f"📊 {symbol} 8h da ALIŞ değil, 10x kaldıraç korundu")
-            except Exception as e:
-                print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
+                        signal_8h = -1
                 
-        elif sell_count == 3:  # 3/3 SATIŞ
-            sinyal_tipi = 'SATIS'
-            leverage = 10  # Varsayılan kaldıraç
-            print(f"🚨 {symbol} SATIŞ sinyali bulundu! (3/3)")
+                if signal_8h == 1:  # 8h da da ALIŞ
+                    leverage = 15  # 4/3 kuralı - kaldıraç artır
+                    print(f"🚀 {symbol} 8h da da ALIŞ! Kaldıraç 15x'e yükseltildi!")
+                else:
+                    print(f"📊 {symbol} 8h da ALIŞ değil, 10x kaldıraç korundu")
+        except Exception as e:
+            print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
             
-            # 8h kontrolü - 4/3 kuralı
-            try:
-                df_8h = await async_get_historical_data(symbol, '8h', 1000)
-                df_8h = calculate_full_pine_signals(df_8h, '8h')
-                current_time = datetime.now()
-                closest_idx_8h = df_8h['timestamp'].searchsorted(current_time)
-                if closest_idx_8h < len(df_8h):
-                    signal_8h = int(df_8h.iloc[closest_idx_8h]['signal'])
-                    if signal_8h == 0:
-                        if df_8h['macd'].iloc[closest_idx_8h] > df_8h['macd_signal'].iloc[closest_idx_8h]:
-                            signal_8h = 1
-                        else:
-                            signal_8h = -1
-                    
-                    if signal_8h == -1:  # 8h da da SATIŞ
-                        leverage = 15  # 4/3 kuralı - kaldıraç artır
-                        print(f"🚀 {symbol} 8h da da SATIŞ! Kaldıraç 15x'e yükseltildi!")
+    elif sell_count == 3:  # 3/3 SATIŞ
+        sinyal_tipi = 'SATIS'
+        leverage = 10  # Varsayılan kaldıraç
+        print(f"🚨 {symbol} SATIŞ sinyali bulundu! (3/3)")
+        
+        # 8h kontrolü - 4/3 kuralı
+        try:
+            df_8h = await async_get_historical_data(symbol, '8h', 1000)
+            df_8h = calculate_full_pine_signals(df_8h, '8h')
+            current_time = datetime.now()
+            closest_idx_8h = df_8h['timestamp'].searchsorted(current_time)
+            if closest_idx_8h < len(df_8h):
+                signal_8h = int(df_8h.iloc[closest_idx_8h]['signal'])
+                if signal_8h == 0:
+                    if df_8h['macd'].iloc[closest_idx_8h] > df_8h['macd_signal'].iloc[closest_idx_8h]:
+                        signal_8h = 1
                     else:
-                        print(f"📊 {symbol} 8h da SATIŞ değil, 10x kaldıraç korundu")
-            except Exception as e:
-                print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
-        else:
-            # print(f"❌ {symbol} 3/3 şartı sağlanmadı, atlanıyor")  # Debug mesajını kaldır
-            previous_signals[symbol] = current_signals.copy()
-            return
-        
-        # Sinyal onay kuralları kaldırıldı - direkt devam et
-        
-        # 4 saatlik cooldown kontrolü (Backtest ile aynı)
-        cooldown_key = (symbol, sinyal_tipi)
-        if cooldown_key in cooldown_signals:
-            last_time = cooldown_signals[cooldown_key]
-            if (datetime.now() - last_time) < timedelta(hours=4):
-                previous_signals[symbol] = current_signals.copy()
-                return
-            else:
-                del cooldown_signals[cooldown_key]
-        # Aynı sinyal daha önce gönderilmiş mi kontrol et
-        signal_key = (symbol, sinyal_tipi)
-        if sent_signals.get(signal_key) == signal_values:
-            previous_signals[symbol] = current_signals.copy()
-            return
-        
-        # Yeni sinyal gönder
-        sent_signals[signal_key] = signal_values.copy()
-        # Sinyal türünü belirle
-        if sinyal_tipi == 'ALIS':
-            dominant_signal = "ALIŞ"
-        else:
-            dominant_signal = "SATIŞ"
-        
-        # Fiyat ve USD hacmini çek
-        df = await async_get_historical_data(symbol, '1h', 1)
-        price = float(df['close'].iloc[-1])
-        volume_usd = await get_24h_volume_usd(symbol)  # 24 saatlik USD hacmi
-        message, _, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent)
-
-        # Pozisyonu kaydet (Backtest ile aynı format)
-        positions[symbol] = {
-            "type": dominant_signal,
-            "target": float(target_price),
-            "stop": float(stop_loss),
-            "open_price": float(price),
-            "stop_str": stop_loss_str,
-            "signals": current_signals,
-            "leverage": leverage,
-            "entry_time": str(datetime.now()),
-            "entry_timestamp": datetime.now()  # Backtest ile uyumlu
-        }
-
-        # Aktif sinyal olarak kaydet (her durumda)
-        active_signals[symbol] = {
-            "symbol": symbol,
-            "type": dominant_signal,
-            "entry_price": format_price(price, price),
-            "entry_price_float": price,
-            "target_price": format_price(target_price, price),
-            "stop_loss": format_price(stop_loss, price),
-            "signals": current_signals,
-            "leverage": leverage,
-            "signal_time": str(datetime.now()),
-            "current_price": format_price(price, price),
-            "current_price_float": price,
-            "last_update": str(datetime.now())
-        }
-
-        # İstatistikleri güncelle (her durumda)
-        stats["total_signals"] += 1
-        stats["active_signals_count"] = len(active_signals)
-
-        if message:
-            await send_signal_to_all_users(message)
-        else:
-            print(f"❌ {symbol} için mesaj oluşturulamadı!")
-
+                        signal_8h = -1
+                
+                if signal_8h == -1:  # 8h da da SATIŞ
+                    leverage = 15  # 4/3 kuralı - kaldıraç artır
+                    print(f"🚀 {symbol} 8h da da SATIŞ! Kaldıraç 15x'e yükseltildi!")
+                else:
+                    print(f"📊 {symbol} 8h da SATIŞ değil, 10x kaldıraç korundu")
+        except Exception as e:
+            print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
+    else:
+        # print(f"❌ {symbol} 3/3 şartı sağlanmadı, atlanıyor")  # Debug mesajını kaldır
         previous_signals[symbol] = current_signals.copy()
+        return
+    
+    # Sinyal onay kuralları kaldırıldı - direkt devam et
+    
+    # 4 saatlik cooldown kontrolü (Backtest ile aynı)
+    cooldown_key = (symbol, sinyal_tipi)
+    if cooldown_key in cooldown_signals:
+        last_time = cooldown_signals[cooldown_key]
+        if (datetime.now() - last_time) < timedelta(hours=4):
+            previous_signals[symbol] = current_signals.copy()
+            return
+        else:
+            del cooldown_signals[cooldown_key]
+    # Aynı sinyal daha önce gönderilmiş mi kontrol et
+    signal_key = (symbol, sinyal_tipi)
+    if sent_signals.get(signal_key) == signal_values:
+        previous_signals[symbol] = current_signals.copy()
+        return
+    
+    # Yeni sinyal gönder
+    sent_signals[signal_key] = signal_values.copy()
+    # Sinyal türünü belirle
+    if sinyal_tipi == 'ALIS':
+        dominant_signal = "ALIŞ"
+    else:
+        dominant_signal = "SATIŞ"
+    
+    # Fiyat ve USD hacmini çek
+    df = await async_get_historical_data(symbol, '1h', 1)
+    price = float(df['close'].iloc[-1])
+    volume_usd = await get_24h_volume_usd(symbol)  # 24 saatlik USD hacmi
+    message, _, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent)
+
+    # Pozisyonu kaydet (Backtest ile aynı format)
+    positions[symbol] = {
+        "type": dominant_signal,
+        "target": float(target_price),
+        "stop": float(stop_loss),
+        "open_price": float(price),
+        "stop_str": stop_loss_str,
+        "signals": current_signals,
+        "leverage": leverage,
+        "entry_time": str(datetime.now()),
+        "entry_timestamp": datetime.now()  # Backtest ile uyumlu
+    }
+
+    # Aktif sinyal olarak kaydet (her durumda)
+    active_signals[symbol] = {
+        "symbol": symbol,
+        "type": dominant_signal,
+        "entry_price": format_price(price, price),
+        "entry_price_float": price,
+        "target_price": format_price(target_price, price),
+        "stop_loss": format_price(stop_loss, price),
+        "signals": current_signals,
+        "leverage": leverage,
+        "signal_time": str(datetime.now()),
+        "current_price": format_price(price, price),
+        "current_price_float": price,
+        "last_update": str(datetime.now())
+    }
+
+    # İstatistikleri güncelle (her durumda)
+    stats["total_signals"] += 1
+    stats["active_signals_count"] = len(active_signals)
+
+    if message:
+        await send_signal_to_all_users(message)
+    else:
+        print(f"❌ {symbol} için mesaj oluşturulamadı!")
+
+    # Sinyal gönderildikten sonra previous_signals'ı güncelle
+    previous_signals[symbol] = current_signals.copy()
 
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
@@ -1708,7 +1708,7 @@ async def signal_processing_loop():
     cooldown_signals = dict()  # {(symbol, sinyal_tipi): datetime} (Backtest ile aynı)
     stop_cooldown = dict()  # {symbol: datetime}
     previous_signals = dict()  # {symbol: {tf: signal}} - İlk çalıştığında kaydedilen sinyaller
-    changed_symbols = set()  # Değişiklik yaşayan semboller (sinyal aramaya başlayabilir)
+    # changed_symbols artık kullanılmıyor (sinyal aramaya başlayabilir)
     stopped_coins = dict()  # {symbol: {...}}
     active_signals = dict()  # {symbol: {...}} - Aktif sinyaller
     successful_signals = dict()  # {symbol: {...}} - Başarılı sinyaller (hedefe ulaşan)
@@ -1942,9 +1942,11 @@ async def signal_processing_loop():
                         print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                         continue
                 
-                    # Aktif sinyaller için 15 dakika bekle
-                    await asyncio.sleep(900)  # 15 dakika
-                    continue
+            # Aktif pozisyonlar varsa 15 dakika bekle, yoksa normal döngüye devam et
+            if positions:
+                print(f"⏰ {len(positions)} aktif pozisyon var, 15 dakika bekleniyor...")
+                await asyncio.sleep(900)  # 15 dakika
+                continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
             new_symbols = await get_active_high_volume_usdt_pairs(100)  # Sadece ilk 100 sembol
@@ -1962,7 +1964,7 @@ async def signal_processing_loop():
             
             tracked_coins.update(symbols)  # Takip edilen coinleri güncelle
 
-            tasks = [process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent, changed_symbols) for symbol in symbols]
+            tasks = [process_symbol(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent, None) for symbol in symbols]
             await asyncio.gather(*tasks)
             # print("✅ Sinyal arama tamamlandı")  # Debug mesajını kaldır
             
@@ -2077,7 +2079,7 @@ async def signal_processing_loop():
             global_active_signals = active_signals.copy()
             global_successful_signals = successful_signals.copy()
             global_failed_signals = failed_signals.copy()
-            global_changed_symbols = changed_symbols.copy()
+            # global_changed_symbols artık kullanılmıyor
             global_allowed_users = ALLOWED_USERS.copy()
             global_admin_users = ADMIN_USERS.copy()
             

@@ -247,7 +247,7 @@ global_stats = {
 global_active_signals = {}
 global_successful_signals = {}
 global_failed_signals = {}
-global_changed_symbols = set()  # Değişiklik yaşayan semboller
+# global_changed_symbols artık kullanılmıyor
 global_allowed_users = set()  # İzin verilen kullanıcılar
 global_admin_users = set()  # Admin kullanıcılar
 
@@ -1094,8 +1094,10 @@ async def get_24h_volume_usd(symbol):
                 if resp.status != 200:
                     raise Exception(f"Futures API hatası: {resp.status} - {await resp.text()}")
                 ticker = await resp.json()
-                quote_volume = float(ticker.get('quoteVolume', 0))  # USD hacmi
-                return quote_volume
+                quote_volume = ticker.get('quoteVolume', 0)  # USD hacmi
+                if quote_volume is None:
+                    return 0
+                return float(quote_volume)
     except Exception as e:
         print(f"Futures 24h USD hacim çekme hatası: {symbol} - {str(e)}")
         return 0
@@ -1379,7 +1381,10 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
             continue
         if symbol in futures_usdt_pairs:
             try:
-                quote_volume = float(ticker['quoteVolume'])
+                quote_volume = ticker.get('quoteVolume', 0)
+                if quote_volume is None:
+                    continue
+                quote_volume = float(quote_volume)
                 high_volume_pairs.append((symbol, quote_volume))
             except Exception:
                 continue
@@ -1651,11 +1656,32 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         dominant_signal = "SATIŞ"
     
     # Fiyat ve USD hacmini çek
-    df = await async_get_historical_data(symbol, '1h', 1)
-    price = float(df['close'].iloc[-1])
-    volume_usd = await get_24h_volume_usd(symbol)  # 24 saatlik USD hacmi
-    message, _, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent)
-
+    try:
+        df = await async_get_historical_data(symbol, '1h', 1)
+        if df is None or df.empty:
+            print(f"❌ {symbol} için fiyat verisi alınamadı")
+            previous_signals[symbol] = current_signals.copy()
+            return
+        
+        price = float(df['close'].iloc[-1])
+        if price is None or price <= 0:
+            print(f"❌ {symbol} için geçersiz fiyat: {price}")
+            previous_signals[symbol] = current_signals.copy()
+            return
+            
+        volume_usd = await get_24h_volume_usd(symbol)  # 24 saatlik USD hacmi
+        message, _, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent)
+        
+        if message is None:
+            print(f"❌ {symbol} için mesaj oluşturulamadı")
+            previous_signals[symbol] = current_signals.copy()
+            return
+            
+    except Exception as e:
+        print(f"❌ {symbol} fiyat/hacim çekme hatası: {str(e)}")
+        previous_signals[symbol] = current_signals.copy()
+        return
+    
     # Pozisyonu kaydet (Backtest ile aynı format)
     positions[symbol] = {
         "type": dominant_signal,
@@ -1754,106 +1780,114 @@ async def signal_processing_loop():
     
     while True:
         try:
-            # Aktif pozisyonları kontrol etmeye devam et (Backtest ile aynı mantık)
+                                    # Aktif pozisyonları kontrol etmeye devam et (Backtest ile aynı mantık)
             for symbol, pos in list(positions.items()):
-                    try:
-                        df = await async_get_historical_data(symbol, '1h', 1)  # Son 1 mumu al
-                        last_price = float(df['close'].iloc[-1])
-                        current_high = float(df['high'].iloc[-1])
-                        current_low = float(df['low'].iloc[-1])
-                        
-                        # Aktif sinyal bilgilerini güncelle
-                        if symbol in active_signals:
-                            active_signals[symbol]["current_price"] = format_price(last_price, pos["open_price"])
-                            active_signals[symbol]["current_price_float"] = last_price
-                            active_signals[symbol]["last_update"] = str(datetime.now())
-                        
-                        # Backtest ile aynı: 1h mumunun high/low değerlerine bak
-                        if pos["type"] == "ALIŞ":
-                            # Hedef kontrolü: High fiyatı hedefe ulaştı mı? (Backtest ile aynı)
-                            if current_high >= pos["target"]:
-                                msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                                await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "ALIS")] = datetime.now()
-                                
-                                # Başarılı sinyal olarak kaydet
-                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
-                                profit_usd = 100 * (profit_percent / 100) * leverage
-                                successful_signals[symbol] = {
-                                    "symbol": symbol,
-                                    "type": pos["type"],
-                                    "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
-                                    "target_price": format_price(pos["target"], pos["open_price"]),
-                                    "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                    "signals": pos["signals"],
-                                    "completion_time": str(datetime.now()),
-                                    "status": "SUCCESS",
-                                    "profit_percent": round(profit_percent, 2),
-                                    "profit_usd": round(profit_usd, 2),
-                                    "leverage": leverage,
-                                    "entry_time": pos.get("entry_time", str(datetime.now())),
-                                    "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
-                                }
-                                
-                                # İstatistikleri güncelle
-                                stats["successful_signals"] += 1
-                                stats["total_profit_loss"] += profit_usd
-                                
-                                if symbol in active_signals:
-                                    del active_signals[symbol]
-                                
-                                del positions[symbol]
-                            # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (Backtest ile aynı)
-                            elif current_low <= pos["stop"]:
-                                msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
-                                await send_signal_to_all_users(msg)
-                                cooldown_signals[(symbol, "ALIS")] = datetime.now()
-                                stop_cooldown[symbol] = datetime.now()
-                                
-                                # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
-                                stopped_coins[symbol] = {
-                                    "symbol": symbol,
-                                    "type": pos["type"],
-                                    "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "stop_time": str(datetime.now()),
-                                    "target_price": format_price(pos["target"], pos["open_price"]),
-                                    "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                    "signals": pos["signals"],
-                                    "min_price": format_price(last_price, pos["open_price"]),
-                                    "max_drawdown_percent": 0.0,
-                                    "reached_target": False
-                                }
-                                
-                                # Başarısız sinyal olarak kaydet
-                                loss_percent = -stop_percent
-                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
-                                loss_usd = -100 * (stop_percent / 100) * leverage
-                                failed_signals[symbol] = {
-                                    "symbol": symbol,
-                                    "type": pos["type"],
-                                    "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
-                                    "target_price": format_price(pos["target"], pos["open_price"]),
-                                    "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                    "signals": pos["signals"],
-                                    "completion_time": str(datetime.now()),
-                                    "status": "FAILED",
-                                    "loss_percent": round(loss_percent, 2),
-                                    "loss_usd": round(loss_usd, 2),
-                                    "leverage": leverage,
-                                    "entry_time": pos.get("entry_time", str(datetime.now())),
-                                    "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
-                                }
-                                
-                                # İstatistikleri güncelle
-                                stats["failed_signals"] += 1
-                                stats["total_profit_loss"] += loss_usd
-                                
-                                if symbol in active_signals:
-                                    del active_signals[symbol]
-                                
-                                del positions[symbol]
+                try:
+                    df = await async_get_historical_data(symbol, '1h', 1)  # Son 1 mumu al
+                    if df is None or df.empty:
+                        print(f"❌ {symbol} pozisyon kontrolü için fiyat verisi alınamadı")
+                        continue
+                    
+                    last_price = float(df['close'].iloc[-1])
+                    current_high = float(df['high'].iloc[-1])
+                    current_low = float(df['low'].iloc[-1])
+                    
+                    if last_price is None or last_price <= 0:
+                        print(f"❌ {symbol} pozisyon kontrolü için geçersiz fiyat: {last_price}")
+                        continue
+                    
+                    # Aktif sinyal bilgilerini güncelle
+                    if symbol in active_signals:
+                        active_signals[symbol]["current_price"] = format_price(last_price, pos["open_price"])
+                        active_signals[symbol]["current_price_float"] = last_price
+                        active_signals[symbol]["last_update"] = str(datetime.now())
+                    
+                    # Backtest ile aynı: 1h mumunun high/low değerlerine bak
+                    if pos["type"] == "ALIŞ":
+                        # Hedef kontrolü: High fiyatı hedefe ulaştı mı? (Backtest ile aynı)
+                        if current_high >= pos["target"]:
+                            msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
+                            await send_signal_to_all_users(msg)
+                            cooldown_signals[(symbol, "ALIS")] = datetime.now()
+                            
+                            # Başarılı sinyal olarak kaydet
+                            leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
+                            profit_usd = 100 * (profit_percent / 100) * leverage
+                            successful_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": pos["type"],
+                                "entry_price": format_price(pos["open_price"], pos["open_price"]),
+                                "exit_price": format_price(last_price, pos["open_price"]),
+                                "target_price": format_price(pos["target"], pos["open_price"]),
+                                "stop_loss": format_price(pos["stop"], pos["open_price"]),
+                                "signals": pos["signals"],
+                                "completion_time": str(datetime.now()),
+                                "status": "SUCCESS",
+                                "profit_percent": round(profit_percent, 2),
+                                "profit_usd": round(profit_usd, 2),
+                                "leverage": leverage,
+                                "entry_time": pos.get("entry_time", str(datetime.now())),
+                                "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
+                            }
+                            
+                            # İstatistikleri güncelle
+                            stats["successful_signals"] += 1
+                            stats["total_profit_loss"] += profit_usd
+                            
+                            if symbol in active_signals:
+                                del active_signals[symbol]
+                            
+                            del positions[symbol]
+                        # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (Backtest ile aynı)
+                        elif current_low <= pos["stop"]:
+                            msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
+                            await send_signal_to_all_users(msg)
+                            cooldown_signals[(symbol, "ALIS")] = datetime.now()
+                            stop_cooldown[symbol] = datetime.now()
+                            
+                            # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
+                            stopped_coins[symbol] = {
+                                "symbol": symbol,
+                                "type": pos["type"],
+                                "entry_price": format_price(pos["open_price"], pos["open_price"]),
+                                "stop_time": str(datetime.now()),
+                                "target_price": format_price(pos["target"], pos["open_price"]),
+                                "stop_loss": format_price(pos["stop"], pos["open_price"]),
+                                "signals": pos["signals"],
+                                "min_price": format_price(last_price, pos["open_price"]),
+                                "max_drawdown_percent": 0.0,
+                                "reached_target": False
+                            }
+                            
+                            # Başarısız sinyal olarak kaydet
+                            loss_percent = -stop_percent
+                            leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
+                            loss_usd = -100 * (stop_percent / 100) * leverage
+                            failed_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": pos["type"],
+                                "entry_price": format_price(pos["open_price"], pos["open_price"]),
+                                "exit_price": format_price(last_price, pos["open_price"]),
+                                "target_price": format_price(pos["target"], pos["open_price"]),
+                                "stop_loss": format_price(pos["stop"], pos["open_price"]),
+                                "signals": pos["signals"],
+                                "completion_time": str(datetime.now()),
+                                "status": "FAILED",
+                                "loss_percent": round(loss_percent, 2),
+                                "loss_usd": round(loss_usd, 2),
+                                "leverage": leverage,
+                                "entry_time": pos.get("entry_time", str(datetime.now())),
+                                "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
+                            }
+                            
+                            # İstatistikleri güncelle
+                            stats["failed_signals"] += 1
+                            stats["total_profit_loss"] += loss_usd
+                            
+                            if symbol in active_signals:
+                                del active_signals[symbol]
+                            
+                            del positions[symbol]
                         elif pos["type"] == "SATIŞ":
                             # Hedef kontrolü: Low fiyatı hedefe ulaştı mı? (Backtest ile aynı)
                             if current_low <= pos["target"]:
@@ -1938,9 +1972,9 @@ async def signal_processing_loop():
                                     del active_signals[symbol]
                                 
                                 del positions[symbol]
-                    except Exception as e:
-                        print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
-                        continue
+                except Exception as e:
+                    print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
+                    continue
                 
             # Aktif pozisyonlar varsa 15 dakika bekle, yoksa normal döngüye devam et
             if positions:
@@ -2074,12 +2108,11 @@ async def signal_processing_loop():
             stats["tracked_coins_count"] = len(tracked_coins)
             
             # Global değişkenleri güncelle (bot komutları için)
-            global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_changed_symbols, global_allowed_users, global_admin_users
+            global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_allowed_users, global_admin_users
             global_stats = stats.copy()
             global_active_signals = active_signals.copy()
             global_successful_signals = successful_signals.copy()
             global_failed_signals = failed_signals.copy()
-            # global_changed_symbols artık kullanılmıyor
             global_allowed_users = ALLOWED_USERS.copy()
             global_admin_users = ADMIN_USERS.copy()
             

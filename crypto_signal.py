@@ -1995,7 +1995,31 @@ async def signal_processing_loop():
         positions = load_positions_from_db()
         # Önceki sinyalleri yükle
         previous_signals = load_previous_signals_from_db()
+        
+        # Aktif sinyalleri pozisyonlardan oluştur
+        for symbol, pos in positions.items():
+            active_signals[symbol] = {
+                "symbol": symbol,
+                "type": pos["type"],
+                "entry_price": format_price(pos["open_price"], pos["open_price"]),
+                "entry_price_float": pos["open_price"],
+                "target_price": format_price(pos["target"], pos["open_price"]),
+                "stop_loss": format_price(pos["stop"], pos["open_price"]),
+                "signals": pos["signals"],
+                "leverage": pos.get("leverage", 10),
+                "signal_time": pos.get("entry_time", str(datetime.now())),
+                "current_price": format_price(pos["open_price"], pos["open_price"]),
+                "current_price_float": pos["open_price"],
+                "last_update": str(datetime.now()),
+                "is_special": pos.get("is_special", False)
+            }
+        
+        # İstatistikleri güncelle
+        stats["active_signals_count"] = len(active_signals)
+        stats["total_signals"] = len(active_signals)  # Yeniden başlatmada toplam sinyal sayısı
+        
         print(f"📊 {len(positions)} aktif pozisyon ve {len(previous_signals)} önceki sinyal yüklendi")
+        print(f"📈 {len(active_signals)} aktif sinyal oluşturuldu")
     
     while True:
         try:

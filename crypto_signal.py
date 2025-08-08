@@ -230,6 +230,206 @@ def close_mongodb():
         except Exception as e:
             print(f"⚠️ MongoDB bağlantısı kapatılırken hata: {e}")
 
+def save_positions_to_db(positions):
+    """Pozisyonları MongoDB'ye kaydet"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, pozisyonlar kaydedilemedi")
+                return False
+        
+        # Tüm pozisyonları tek seferde kaydet
+        for symbol, position in positions.items():
+            position_doc = {
+                "_id": f"position_{symbol}",
+                "symbol": symbol,
+                "type": position["type"],
+                "target": position["target"],
+                "stop": position["stop"],
+                "open_price": position["open_price"],
+                "stop_str": position["stop_str"],
+                "signals": position["signals"],
+                "leverage": position.get("leverage", 10),
+                "entry_time": position["entry_time"],
+                "entry_timestamp": position["entry_timestamp"].isoformat() if isinstance(position["entry_timestamp"], datetime) else position["entry_timestamp"],
+                "is_special": position.get("is_special", False),
+                "last_updated": str(datetime.now())
+            }
+            
+            mongo_collection.update_one(
+                {"_id": f"position_{symbol}"},
+                {"$set": position_doc},
+                upsert=True
+            )
+        
+        print(f"✅ MongoDB'ye {len(positions)} pozisyon kaydedildi")
+        return True
+    except Exception as e:
+        print(f"❌ MongoDB'ye pozisyonlar kaydedilirken hata: {e}")
+        return False
+
+def load_positions_from_db():
+    """Pozisyonları MongoDB'den yükle"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, pozisyonlar yüklenemedi")
+                return {}
+        
+        positions = {}
+        position_docs = mongo_collection.find({"_id": {"$regex": "^position_"}})
+        
+        for doc in position_docs:
+            symbol = doc["symbol"]
+            positions[symbol] = {
+                "type": doc["type"],
+                "target": doc["target"],
+                "stop": doc["stop"],
+                "open_price": doc["open_price"],
+                "stop_str": doc["stop_str"],
+                "signals": doc["signals"],
+                "leverage": doc.get("leverage", 10),
+                "entry_time": doc["entry_time"],
+                "entry_timestamp": datetime.fromisoformat(doc["entry_timestamp"]) if isinstance(doc["entry_timestamp"], str) else doc["entry_timestamp"],
+                "is_special": doc.get("is_special", False)
+            }
+        
+        print(f"✅ MongoDB'den {len(positions)} pozisyon yüklendi")
+        return positions
+    except Exception as e:
+        print(f"❌ MongoDB'den pozisyonlar yüklenirken hata: {e}")
+        return {}
+
+def save_previous_signals_to_db(previous_signals):
+    """Önceki sinyalleri MongoDB'ye kaydet (sadece ilk çalıştırmada)"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, önceki sinyaller kaydedilemedi")
+                return False
+        
+        # Önceki sinyallerin kaydedilip kaydedilmediğini kontrol et
+        existing_doc = mongo_collection.find_one({"_id": "previous_signals_initialized"})
+        if existing_doc:
+            print("ℹ️ Önceki sinyaller zaten kaydedilmiş, tekrar kaydedilmiyor")
+            return True
+        
+        # Tüm önceki sinyalleri kaydet
+        for symbol, signals in previous_signals.items():
+            signal_doc = {
+                "_id": f"previous_signal_{symbol}",
+                "symbol": symbol,
+                "signals": signals,
+                "saved_time": str(datetime.now())
+            }
+            
+            mongo_collection.update_one(
+                {"_id": f"previous_signal_{symbol}"},
+                {"$set": signal_doc},
+                upsert=True
+            )
+        
+        # İlk kayıt işaretini koy
+        mongo_collection.update_one(
+            {"_id": "previous_signals_initialized"},
+            {"$set": {"initialized": True, "initialized_time": str(datetime.now())}},
+            upsert=True
+        )
+        
+        print(f"✅ MongoDB'ye {len(previous_signals)} önceki sinyal kaydedildi (ilk çalıştırma)")
+        return True
+    except Exception as e:
+        print(f"❌ MongoDB'ye önceki sinyaller kaydedilirken hata: {e}")
+        return False
+
+def load_previous_signals_from_db():
+    """Önceki sinyalleri MongoDB'den yükle"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, önceki sinyaller yüklenemedi")
+                return {}
+        
+        previous_signals = {}
+        signal_docs = mongo_collection.find({"_id": {"$regex": "^previous_signal_"}})
+        
+        for doc in signal_docs:
+            symbol = doc["symbol"]
+            previous_signals[symbol] = doc["signals"]
+        
+        print(f"✅ MongoDB'den {len(previous_signals)} önceki sinyal yüklendi")
+        return previous_signals
+    except Exception as e:
+        print(f"❌ MongoDB'den önceki sinyaller yüklenirken hata: {e}")
+        return {}
+
+def is_first_run():
+    """İlk çalıştırma mı kontrol et"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return True  # Bağlantı yoksa ilk çalıştırma kabul et
+        
+        # Önceki sinyallerin kaydedilip kaydedilmediğini kontrol et
+        existing_doc = mongo_collection.find_one({"_id": "previous_signals_initialized"})
+        if existing_doc is None:
+            return True  # İlk çalıştırma
+        
+        # Pozisyonların varlığını da kontrol et
+        position_count = mongo_collection.count_documents({"_id": {"$regex": "^position_"}})
+        if position_count > 0:
+            print(f"📊 MongoDB'de {position_count} aktif pozisyon bulundu, yeniden başlatma olarak algılanıyor")
+            return False  # Yeniden başlatma
+        
+        # Önceki sinyallerin varlığını kontrol et
+        signal_count = mongo_collection.count_documents({"_id": {"$regex": "^previous_signal_"}})
+        if signal_count > 0:
+            print(f"📊 MongoDB'de {signal_count} önceki sinyal bulundu, yeniden başlatma olarak algılanıyor")
+            return False  # Yeniden başlatma
+        
+        return True  # İlk çalıştırma
+    except Exception as e:
+        print(f"❌ İlk çalıştırma kontrolünde hata: {e}")
+        return True
+
+def update_previous_signal_in_db(symbol, signals):
+    """Belirli bir coin'in önceki sinyallerini güncelle"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return False
+        
+        signal_doc = {
+            "_id": f"previous_signal_{symbol}",
+            "symbol": symbol,
+            "signals": signals,
+            "updated_time": str(datetime.now())
+        }
+        
+        mongo_collection.update_one(
+            {"_id": f"previous_signal_{symbol}"},
+            {"$set": signal_doc},
+            upsert=True
+        )
+        
+        return True
+    except Exception as e:
+        print(f"❌ Önceki sinyal güncellenirken hata: {e}")
+        return False
+
+def remove_position_from_db(symbol):
+    """Pozisyonu MongoDB'den kaldır"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return False
+        
+        mongo_collection.delete_one({"_id": f"position_{symbol}"})
+        return True
+    except Exception as e:
+        print(f"❌ Pozisyon kaldırılırken hata: {e}")
+        return False
+
 # Bot handler'ları için global değişkenler
 app = None
 
@@ -987,7 +1187,7 @@ def format_volume(volume):
     else:
         return f"${volume:,.0f}"
 
-def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0):
+def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0, signal_8h=None):
     """Sinyal mesajını oluştur (AL/SAT başlıkta)"""
     price_str = format_price(price, price)
     signal_4h = "ALIŞ" if signals.get('4h', 0) == 1 else "SATIŞ"
@@ -995,18 +1195,33 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, st
     buy_count = sum(1 for s in signals.values() if s == 1)
     sell_count = sum(1 for s in signals.values() if s == -1)
     
-    if buy_count == 2:  # 2/2 ALIŞ
+    if buy_count == 3:  # 3/3 ALIŞ
         dominant_signal = "ALIŞ"
         target_price = price * (1 + profit_percent / 100)  # Dinamik kar hedefi
         stop_loss = price * (1 - stop_percent / 100)       # Dinamik stop loss
         sinyal_tipi = "AL SİNYALİ"
         leverage = 10
-    elif sell_count == 2:  # 2/2 SATIŞ
+        
+        # 8h kontrolü - 4/3 kuralı
+        if signal_8h == 1:  # 8h da da ALIŞ
+            leverage = 15  # 4/3 kuralı - kaldıraç artır
+            print(f"🚀 {symbol} 8h da da ALIŞ! Kaldıraç 15x'e yükseltildi!")
+        else:
+            print(f"📊 {symbol} 8h da ALIŞ değil, 10x kaldıraç korundu")
+            
+    elif sell_count == 3:  # 3/3 SATIŞ
         dominant_signal = "SATIŞ"
         target_price = price * (1 - profit_percent / 100)  # Dinamik kar hedefi
         stop_loss = price * (1 + stop_percent / 100)       # Dinamik stop loss
         sinyal_tipi = "SAT SİNYALİ"
         leverage = 10
+        
+        # 8h kontrolü - 4/3 kuralı
+        if signal_8h == -1:  # 8h da da SATIŞ
+            leverage = 15  # 4/3 kuralı - kaldıraç artır
+            print(f"🚀 {symbol} 8h da da SATIŞ! Kaldıraç 15x'e yükseltildi!")
+        else:
+            print(f"📊 {symbol} 8h da SATIŞ değil, 10x kaldıraç korundu")
     else:
         return None, None, None, None, None
     
@@ -1030,7 +1245,7 @@ def create_signal_message(symbol, price, signals, volume, profit_percent=1.5, st
 📺 <b>Kanallar:</b>
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""
 
-    return message, dominant_signal, target_price, stop_loss, stop_loss_str
+    return message, dominant_signal, target_price, stop_loss, stop_loss_str, leverage
 
 def create_special_signal_message(symbol, price, signals, volume, profit_percent=1.5, stop_percent=1.0):
     """Özel yıldızlı sinyal mesajını oluştur"""
@@ -1574,10 +1789,10 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
     # Sinyal kontrolü yap (3/3 şartı)
     if buy_count == 3:  # 3/3 ALIŞ
         sinyal_tipi = 'ALIS'
-        leverage = 10  # Varsayılan kaldıraç
         print(f"🚨 {symbol} ALIŞ sinyali bulundu! (3/3)")
         
         # 8h kontrolü - 4/3 kuralı
+        signal_8h = None
         try:
             df_8h = await async_get_historical_data(symbol, '8h', 1000)
             df_8h = calculate_full_pine_signals(df_8h, '8h')
@@ -1590,21 +1805,15 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
                         signal_8h = 1
                     else:
                         signal_8h = -1
-                
-                if signal_8h == 1:  # 8h da da ALIŞ
-                    leverage = 15  # 4/3 kuralı - kaldıraç artır
-                    print(f"🚀 {symbol} 8h da da ALIŞ! Kaldıraç 15x'e yükseltildi!")
-                else:
-                    print(f"📊 {symbol} 8h da ALIŞ değil, 10x kaldıraç korundu")
         except Exception as e:
             print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
             
     elif sell_count == 3:  # 3/3 SATIŞ
         sinyal_tipi = 'SATIS'
-        leverage = 10  # Varsayılan kaldıraç
         print(f"🚨 {symbol} SATIŞ sinyali bulundu! (3/3)")
         
         # 8h kontrolü - 4/3 kuralı
+        signal_8h = None
         try:
             df_8h = await async_get_historical_data(symbol, '8h', 1000)
             df_8h = calculate_full_pine_signals(df_8h, '8h')
@@ -1617,12 +1826,6 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
                         signal_8h = 1
                     else:
                         signal_8h = -1
-                
-                if signal_8h == -1:  # 8h da da SATIŞ
-                    leverage = 15  # 4/3 kuralı - kaldıraç artır
-                    print(f"🚀 {symbol} 8h da da SATIŞ! Kaldıraç 15x'e yükseltildi!")
-                else:
-                    print(f"📊 {symbol} 8h da SATIŞ değil, 10x kaldıraç korundu")
         except Exception as e:
             print(f"⚠️ {symbol} 8h kontrolünde hata: {str(e)}")
     else:
@@ -1670,7 +1873,7 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
             return
             
         volume_usd = await get_24h_volume_usd(symbol)  # 24 saatlik USD hacmi
-        message, _, target_price, stop_loss, stop_loss_str = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent)
+        message, _, target_price, stop_loss, stop_loss_str, leverage = create_signal_message(symbol, price, current_signals, volume_usd, profit_percent, stop_percent, signal_8h)
         
         if message is None:
             print(f"❌ {symbol} için mesaj oluşturulamadı")
@@ -1694,6 +1897,9 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         "entry_time": str(datetime.now()),
         "entry_timestamp": datetime.now()  # Backtest ile uyumlu
     }
+    
+    # Pozisyonu veritabanına kaydet
+    save_positions_to_db(positions)
 
     # Aktif sinyal olarak kaydet (her durumda)
     active_signals[symbol] = {
@@ -1722,6 +1928,8 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
 
     # Sinyal gönderildikten sonra previous_signals'ı güncelle
     previous_signals[symbol] = current_signals.copy()
+    # Veritabanına da kaydet
+    update_previous_signal_in_db(symbol, current_signals)
 
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
@@ -1776,7 +1984,18 @@ async def signal_processing_loop():
     special_signal_symbol = None   # Aktif özel sinyal sembolü 
     
     print("🚀 Bot başlatıldı!")
-    print("⏰ İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
+    
+    # İlk çalıştırma kontrolü
+    is_first = is_first_run()
+    if is_first:
+        print("⏰ İlk çalıştırma: Mevcut sinyaller kaydediliyor, değişiklik bekleniyor...")
+    else:
+        print("🔄 Yeniden başlatma: Veritabanından pozisyonlar ve sinyaller yükleniyor...")
+        # Pozisyonları yükle
+        positions = load_positions_from_db()
+        # Önceki sinyalleri yükle
+        previous_signals = load_previous_signals_from_db()
+        print(f"📊 {len(positions)} aktif pozisyon ve {len(previous_signals)} önceki sinyal yüklendi")
     
     while True:
         try:
@@ -1837,11 +2056,12 @@ async def signal_processing_loop():
                             if symbol in active_signals:
                                 del active_signals[symbol]
                             
+                            # Pozisyonu veritabanından kaldır
+                            remove_position_from_db(symbol)
                             del positions[symbol]
                         # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (Backtest ile aynı)
                         elif current_low <= pos["stop"]:
-                            msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
-                            await send_signal_to_all_users(msg)
+                            # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
                             cooldown_signals[(symbol, "ALIS")] = datetime.now()
                             stop_cooldown[symbol] = datetime.now()
                             
@@ -1887,6 +2107,8 @@ async def signal_processing_loop():
                             if symbol in active_signals:
                                 del active_signals[symbol]
                             
+                            # Pozisyonu veritabanından kaldır
+                            remove_position_from_db(symbol)
                             del positions[symbol]
                         elif pos["type"] == "SATIŞ":
                             # Hedef kontrolü: Low fiyatı hedefe ulaştı mı? (Backtest ile aynı)
@@ -1922,11 +2144,12 @@ async def signal_processing_loop():
                                 if symbol in active_signals:
                                     del active_signals[symbol]
                                 
+                                # Pozisyonu veritabanından kaldır
+                                remove_position_from_db(symbol)
                                 del positions[symbol]
                             # Stop kontrolü: High fiyatı stop'a ulaştı mı? (Backtest ile aynı)
                             elif current_high >= pos["stop"]:
-                                msg = f"❌ {symbol} işlemi stop oldu! Stop fiyatı: {pos['stop_str']}, Şu anki fiyat: {format_price(last_price, pos['stop'])}"
-                                await send_signal_to_all_users(msg)
+                                # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
                                 
@@ -1971,16 +2194,17 @@ async def signal_processing_loop():
                                 if symbol in active_signals:
                                     del active_signals[symbol]
                                 
+                                # Pozisyonu veritabanından kaldır
+                                remove_position_from_db(symbol)
                                 del positions[symbol]
                 except Exception as e:
                     print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                     continue
                 
-            # Aktif pozisyonlar varsa 15 dakika bekle, yoksa normal döngüye devam et
+            # Aktif pozisyonlar varsa 15 dakika bekle, sonra yeni sinyal aramaya devam et
             if positions:
                 print(f"⏰ {len(positions)} aktif pozisyon var, 15 dakika bekleniyor...")
                 await asyncio.sleep(900)  # 15 dakika
-                continue
                 
             # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
             new_symbols = await get_active_high_volume_usdt_pairs(100)  # Sadece ilk 100 sembol
@@ -2044,6 +2268,9 @@ async def signal_processing_loop():
                                         "entry_timestamp": datetime.now(),
                                         "is_special": True  # Özel sinyal işareti
                                     }
+                                    
+                                    # Özel sinyal pozisyonunu veritabanına kaydet
+                                    save_positions_to_db(positions)
                                     
                                     # Aktif sinyal olarak kaydet
                                     active_signals[symbol] = {
@@ -2138,9 +2365,14 @@ async def signal_processing_loop():
                 print(f"   Başarı Oranı: %{success_rate:.1f}")
             else:
                 print(f"   Başarı Oranı: %0.0")
-            # Döngü sonunda bekleme süresi (Backtest ile aynı - 10 dakika)
-            print("Tüm coinler kontrol edildi. 10 dakika bekleniyor...")
-            await asyncio.sleep(600)  # 10 dakika (Backtest'teki en iyi aralık)
+            # İlk çalıştırmada önceki sinyalleri kaydet
+            if is_first and len(previous_signals) > 0:
+                save_previous_signals_to_db(previous_signals)
+                is_first = False  # Artık ilk çalıştırma değil
+            
+            # Döngü sonunda bekleme süresi (15 dakika)
+            print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
+            await asyncio.sleep(900)  # 15 dakika
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -2152,7 +2384,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(600)  # 10 dakika (Backtest ile aynı)
+            await asyncio.sleep(900)  # 15 dakika
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle

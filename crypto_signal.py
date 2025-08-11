@@ -142,7 +142,7 @@ def load_data_from_db(doc_id, default_value=None):
     try:
         doc = mongo_collection.find_one({"_id": doc_id})
         if doc:
-            # Eğer "data" alanı varsa onu döndür, yoksa tüm dokümanı döndür
+            # Eğer "data" alanı varsa onu döndür, yoksa tüm dokümanı döndür (geriye uyumluluk için)
             if "data" in doc:
                 return doc["data"]
             else:
@@ -799,6 +799,13 @@ async def stats_command(update, context):
         if closed_count > 0:
             success_rate = (stats.get('successful_signals', 0) / closed_count) * 100
         
+        # Görüntülenecek toplam: başarılı + başarısız + aktif (bekleyenler hariç)
+        computed_total = (
+            stats.get('successful_signals', 0)
+            + stats.get('failed_signals', 0)
+            + stats.get('active_signals_count', 0)
+        )
+        
         # Bot durumu
         status_emoji = "🟢"
         status_text = "Aktif (Sinyal Arama Çalışıyor)"
@@ -806,7 +813,7 @@ async def stats_command(update, context):
         stats_text = f"""📊 **Bot İstatistikleri:**
 
 📈 **Genel Durum:**
-• Toplam Sinyal: {stats.get('total_signals', 0)}
+• Toplam Sinyal: {computed_total}
 • Başarılı: {stats.get('successful_signals', 0)}
 • Başarısız: {stats.get('failed_signals', 0)}
 • Aktif Sinyal: {stats.get('active_signals_count', 0)}
@@ -2705,7 +2712,8 @@ async def signal_processing_loop():
             
             # İstatistik özeti yazdır
             print(f"📊 İSTATİSTİK ÖZETİ:")
-            print(f"   Toplam Sinyal: {stats['total_signals']}")
+            total_display = stats.get('successful_signals', 0) + stats.get('failed_signals', 0) + stats.get('active_signals_count', 0)
+            print(f"   Toplam Sinyal: {total_display}")
             print(f"   Başarılı: {stats['successful_signals']}")
             print(f"   Başarısız: {stats['failed_signals']}")
             print(f"   Aktif Sinyal: {stats['active_signals_count']}")

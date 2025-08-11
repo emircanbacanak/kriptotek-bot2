@@ -3086,7 +3086,7 @@ async def check_general_confirmations(pending_dict, positions, active_signals, s
                     save_stats_to_db(stats)
                     await send_signal_to_all_users(message)
                     if special_signal:
-                        global_6_6_last_signal_time = datetime.now()
+                                global_6_6_last_signal_time = datetime.now()
                     print(f"✅ {data['symbol']} {data['signal_type']} sinyali 15m kapanış onayı ile gönderildi")
                 del pending_dict[symbol]
             else:

@@ -161,7 +161,7 @@ def save_stats_to_db(stats):
 
 def load_stats_from_db():
     """MongoDB'den son istatistik sözlüğünü döndürür."""
-    return load_data_from_db("bot_stats", None)
+    return load_data_from_db("bot_stats", {})
 
 
 def save_active_signals_to_db(active_signals):
@@ -353,22 +353,23 @@ def load_positions_from_db():
     """Pozisyonları MongoDB'den yükle"""
     try:
         def transform_position(doc):
-            symbol = doc["symbol"]
+            # _id'den symbol'ü çıkar (position_BTCUSDT -> BTCUSDT)
+            symbol = doc["_id"].replace("position_", "")
             return {symbol: {
-                "type": doc["type"],
-                "target": doc["target"],
-                "stop": doc["stop"],
-                "open_price": doc["open_price"],
-                "stop_str": doc["stop_str"],
-                "signals": doc["signals"],
+                "type": doc.get("type", "ALIS"),  # Varsayılan ALIS
+                "target": doc.get("target", 0.0),
+                "stop": doc.get("stop", 0.0),
+                "open_price": doc.get("open_price", 0.0),
+                "stop_str": doc.get("stop_str", ""),
+                "signals": doc.get("signals", {}),
                 "leverage": doc.get("leverage", 10),
-                "entry_time": doc["entry_time"],
-                "entry_timestamp": datetime.fromisoformat(doc["entry_timestamp"]) if isinstance(doc["entry_timestamp"], str) else doc["entry_timestamp"],
+                "entry_time": doc.get("entry_time", ""),
+                "entry_timestamp": datetime.fromisoformat(doc["entry_timestamp"]) if isinstance(doc.get("entry_timestamp"), str) else doc.get("entry_timestamp", datetime.now()),
                 "is_special": doc.get("is_special", False)
             }}
         
-        # Genel DB fonksiyonunu kullan
-        return load_data_by_pattern("^position_", "data", "pozisyon", transform_position)
+        # Pozisyon dokümanlarında "data" alanı yok, direkt dokümanı kullan
+        return load_data_by_pattern("^position_", None, "pozisyon", transform_position)
     except Exception as e:
         print(f"❌ MongoDB'den pozisyonlar yüklenirken hata: {e}")
         return {}
@@ -414,8 +415,13 @@ def load_previous_signals_from_db():
     """Önceki sinyalleri MongoDB'den yükle"""
     try:
         def transform_signal(doc):
-            symbol = doc["symbol"]
-            return {symbol: doc["signals"]}
+            # _id'den symbol'ü çıkar (previous_signal_BTCUSDT -> BTCUSDT)
+            symbol = doc["_id"].replace("previous_signal_", "")
+            if "signals" in doc:
+                return {symbol: doc["signals"]}
+            else:
+                # Eski veri yapısı için geriye uyumluluk
+                return {symbol: doc}
         
         # Genel DB fonksiyonunu kullan
         return load_data_by_pattern("^previous_signal_", "signals", "önceki sinyal", transform_signal)
@@ -511,6 +517,9 @@ global_allowed_users = set()  # İzin verilen kullanıcılar
 global_admin_users = set()  # Admin kullanıcılar
 # Saatlik yeni sinyal taraması için zaman damgası (6/6 özel sinyaller hariç)
 global_last_signal_scan_time = None
+
+# 15m mum kapanış onayı bekleyen genel sinyaller (ALIŞ/SATIŞ)
+global_pending_signals = {}
 
 def is_authorized_chat(update):
     """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
@@ -1167,10 +1176,23 @@ async def setup_bot():
     
     # Mevcut webhook'ları temizle ve offset'i sıfırla
     try:
+        # Webhook'ı sil
         await app.bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook silindi")
+        
+        # Pending updates'leri temizle
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Pending updates temizlendi")
+        
+        # Offset'i sıfırla
+        await app.bot.get_updates(offset=-1, limit=1)
+        print("✅ Update offset sıfırlandı")
+        
         print("✅ Mevcut webhook'lar temizlendi ve pending updates silindi")
     except Exception as e:
         print(f"⚠️ Webhook temizleme hatası: {e}")
+        # Hata durumunda polling moduna geç
+        print("🔄 Polling moduna geçiliyor...")
     
     # Komut handler'ları
     app.add_handler(CommandHandler("help", help_command))
@@ -1683,8 +1705,8 @@ async def get_active_high_volume_usdt_pairs(top_n=100):
 
 async def check_signal_potential(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent):
     """Bir sembolün sinyal potansiyelini kontrol eder, sinyal varsa detayları döndürür."""
-    # Stop cooldown kontrolü (4 saat)
-    if check_cooldown(symbol, stop_cooldown, 4):
+    # Stop cooldown kontrolü (8 saat)
+    if check_cooldown(symbol, stop_cooldown, 8):
         return None
 
     try:
@@ -1800,7 +1822,6 @@ def select_priority_signals(potential_signals, max_signals=2):
             print(f"   ✅ {sig['symbol']} ({priority_text}, ${sig['volume_usd']/1_000_000:.1f}M hacim)")
         for sig in waiting:
             priority_text = "6/6 (20x)" if sig['priority'] == 0 else "6/5 (15x)" if sig['priority'] == 1 else "6/4 (10x)" if sig['priority'] == 2 else "diğer"
-            print(f"   ⏳ {sig['symbol']} bekleme listesinde ({priority_text}, ${sig['volume_usd']/1_000_000:.1f}M hacim)")
     
     return selected, waiting
 
@@ -1829,20 +1850,22 @@ def handle_6_6_signals(six_six_signals):
         selected_signal = six_six_signals[0]
         print(f"⭐ 6/6 sinyal bulundu: {selected_signal['symbol']} (${selected_signal['volume_usd']/1_000_000:.1f}M) - 20x Kaldıraç")
     
-    # 30 dakika sonra doğrulama için bekletme listesine ekle
+    # 6/6 sinyali için 30 dk bekleme yerine 15m kapanış onayı kuyruğuna ekle
     symbol = selected_signal['symbol']
-    confirmation_time = datetime.now() + timedelta(minutes=30)
-    
-    global_6_6_pending_signals[symbol] = {
-        'signal_data': selected_signal,
-        'initial_time': datetime.now(),
-        'confirmation_time': confirmation_time
+    signal_type = selected_signal['signal_type']
+    desired_color = 'green' if signal_type == 'ALIŞ' else 'red'
+    global_pending_signals[symbol] = {
+        'symbol': symbol,
+        'signal_type': signal_type,
+        'price': selected_signal['price'],
+        'volume_usd': selected_signal['volume_usd'],
+        'signals': selected_signal['signals'],
+        'desired_color': desired_color,
+        'queued_at': datetime.now(),
     }
-    global_6_6_confirmation_time[symbol] = confirmation_time
+    print(f"⏳ {symbol} 6/6 {signal_type} sinyali 15m kapanış onayı için kuyruğa alındı (hedef renk: {desired_color})")
     
-    print(f"⏳ {symbol} 6/6 sinyali 30 dakika doğrulama beklemesinde ({confirmation_time.strftime('%H:%M')} saatinde kontrol edilecek)")
-    
-    # Henüz sinyal gönderme, 30 dakika bekleyecek
+    # Henüz sinyal gönderme, 15m kapanış onayını bekleyecek
     return []
 
 
@@ -1926,8 +1949,9 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             }
             
             positions[symbol] = position
-            # Pozisyon kaydetme - toplu kaydetme fonksiyonu kullanılacak
-            # save_position_to_db(symbol, position)  # Bu fonksiyon yok, toplu kaydetme yapılacak
+            
+            # ✅ POZİSYONU MONGODB'YE KAYDET
+            save_positions_to_db(positions)
             
             # Aktif sinyale ekle
             active_signals[symbol] = {
@@ -1946,9 +1970,15 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
                 "is_special": special_signal
             }
             
+            # ✅ AKTİF SİNYALİ MONGODB'YE KAYDET
+            save_active_signals_to_db(active_signals)
+            
             # İstatistikleri güncelle
             stats["total_signals"] += 1
             stats["active_signals_count"] = len(active_signals)
+            
+            # ✅ İSTATİSTİKLERİ MONGODB'YE KAYDET
+            save_stats_to_db(stats)
             
             # Sinyali gönder
             await send_signal_to_all_users(message)
@@ -2035,12 +2065,12 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         return
     
     # Stop cooldown kontrolü - genel fonksiyonu kullan
-    if check_cooldown(symbol, stop_cooldown, 4):
+    if check_cooldown(symbol, stop_cooldown, 8):
         return
     
-    # Başarılı/başarısız sinyal sonrası 4 saatlik cooldown kontrolü - genel fonksiyonu kullan
+    # Başarılı/başarısız sinyal sonrası 8 saatlik cooldown kontrolü - genel fonksiyonu kullan
     for sdict in [successful_signals, failed_signals]:
-        if check_cooldown(symbol, sdict, 4):
+        if check_cooldown(symbol, sdict, 8):
             return
     
     # 1d'lik veri kontrolü
@@ -2084,9 +2114,9 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         sinyal_tipi = 'SATIS'
         dominant_signal = "SATIŞ"
     
-    # 4 saatlik cooldown kontrolü
+    # 8 saatlik cooldown kontrolü
     cooldown_key = (symbol, sinyal_tipi)
-    if check_cooldown(cooldown_key, cooldown_signals, 4):
+    if check_cooldown(cooldown_key, cooldown_signals, 8):
         return
     
     # Aktif pozisyon kontrolü
@@ -2133,6 +2163,9 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         
         positions[symbol] = position
         
+        # ✅ POZİSYONU MONGODB'YE KAYDET
+        save_positions_to_db(positions)
+        
         # Aktif sinyale ekle
         active_signals[symbol] = {
             "symbol": symbol,
@@ -2163,10 +2196,14 @@ async def process_symbol(symbol, positions, stop_cooldown, successful_signals, f
         await send_signal_to_all_users(message)
         
         # İstatistikleri güncelle
-        if sinyal_tipi == 'ALIS':
-            stats['total_buy_signals'] += 1
-        else:
-            stats['total_sell_signals'] += 1
+        stats["total_signals"] += 1
+        stats["active_signals_count"] = len(active_signals)
+        
+        # ✅ İSTATİSTİKLERİ MONGODB'YE KAYDET
+        save_stats_to_db(stats)
+        
+        # ✅ AKTİF SİNYALLERİ MONGODB'YE KAYDET
+        save_active_signals_to_db(active_signals)
         
         print(f"✅ {symbol} {sinyal_tipi} sinyali gönderildi! (Öncelik: {signal_priority})")
         
@@ -2262,7 +2299,7 @@ async def signal_processing_loop():
         
         # İstatistikleri güncelle
         stats["active_signals_count"] = len(active_signals)
-        stats["total_signals"] = len(active_signals)  # Yeniden başlatmada toplam sinyal sayısı
+        # total_signals'ı güncelleme - sadece aktif sinyal sayısını güncelle
         
         # DB'ye yaz
         save_active_signals_to_db(active_signals)
@@ -2299,6 +2336,7 @@ async def signal_processing_loop():
                     if pos["type"] == "ALIŞ":
                         # Hedef kontrolü: High fiyatı hedefe ulaştı mı? (Backtest ile aynı)
                         if current_high >= pos["target"]:
+                            print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! Çıkış: {format_price(last_price)}")
                             msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                             await send_signal_to_all_users(msg)
                             cooldown_signals[(symbol, "ALIS")] = datetime.now()
@@ -2326,15 +2364,23 @@ async def signal_processing_loop():
                             # İstatistikleri güncelle
                             stats["successful_signals"] += 1
                             stats["total_profit_loss"] += profit_usd
+                            stats["active_signals_count"] = len(active_signals)
                             
                             if symbol in active_signals:
                                 del active_signals[symbol]
+                            
+                            # ✅ İSTATİSTİKLERİ MONGODB'YE KAYDET
+                            save_stats_to_db(stats)
+                            
+                            # ✅ AKTİF SİNYALLERİ MONGODB'YE KAYDET
+                            save_active_signals_to_db(active_signals)
                             
                             # Pozisyonu veritabanından kaldır
                             remove_position_from_db(symbol)
                             del positions[symbol]
                         # Stop kontrolü: Low fiyatı stop'a ulaştı mı? (Backtest ile aynı)
                         elif current_low <= pos["stop"]:
+                            print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
                             # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
                             cooldown_signals[(symbol, "ALIS")] = datetime.now()
                             stop_cooldown[symbol] = datetime.now()
@@ -2377,9 +2423,16 @@ async def signal_processing_loop():
                             # İstatistikleri güncelle
                             stats["failed_signals"] += 1
                             stats["total_profit_loss"] += loss_usd
+                            stats["active_signals_count"] = len(active_signals)
                             
                             if symbol in active_signals:
                                 del active_signals[symbol]
+                            
+                            # ✅ İSTATİSTİKLERİ MONGODB'YE KAYDET
+                            save_stats_to_db(stats)
+                            
+                            # ✅ AKTİF SİNYALLERİ MONGODB'YE KAYDET
+                            save_active_signals_to_db(active_signals)
                             
                             # Pozisyonu veritabanından kaldır
                             remove_position_from_db(symbol)
@@ -2387,6 +2440,7 @@ async def signal_processing_loop():
                         elif pos["type"] == "SATIŞ":
                             # Hedef kontrolü: Low fiyatı hedefe ulaştı mı? (Backtest ile aynı)
                             if current_low <= pos["target"]:
+                                print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! Çıkış: {format_price(last_price)}")
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_signal_to_all_users(msg)
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
@@ -2423,6 +2477,7 @@ async def signal_processing_loop():
                                 del positions[symbol]
                             # Stop kontrolü: High fiyatı stop'a ulaştı mı? (Backtest ile aynı)
                             elif current_high >= pos["stop"]:
+                                print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
                                 # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
                                 cooldown_signals[(symbol, "SATIS")] = datetime.now()
                                 stop_cooldown[symbol] = datetime.now()
@@ -2477,8 +2532,8 @@ async def signal_processing_loop():
                 
             # Aktif pozisyonlar varsa 10 dakika bekle, sonra yeni sinyal aramaya devam et
             if positions:
-                print(f"⏰ {len(positions)} aktif pozisyon var, 10 dakika bekleniyor...")
-                await asyncio.sleep(600)  # 10 dakika
+                print(f"⏰ {len(positions)} aktif pozisyon var, 15 dakika bekleniyor...")
+                await asyncio.sleep(900)  # 15 dakika
                 
             # Saatlik yeni sinyal taraması kontrolü
             global global_last_signal_scan_time
@@ -2517,9 +2572,36 @@ async def signal_processing_loop():
                 # Sinyal önceliğine göre sırala ve en fazla 2 tanesini seç
                 selected_signals, waiting_signals = select_priority_signals(potential_signals, 2)
                 
-                # Seçilen sinyalleri gönder
+                # Seçilen sinyalleri hemen göndermek yerine 15m kapanış onay kuyruğuna al
                 for signal_data in selected_signals:
-                    await process_selected_signal(signal_data, positions, active_signals, stats)
+                    symbol = signal_data['symbol']
+                    signal_type = signal_data['signal_type']
+                    price = signal_data['price']
+                    volume_usd = signal_data['volume_usd']
+                    signals = signal_data['signals']
+
+                    # 15 dakikalık mum (15m) son mum rengini kontrol etmek için bekleme başlat
+                    try:
+                        df15 = await async_get_historical_data(symbol, '15m', 2)
+                        if df15 is None or df15.empty or len(df15) < 2:
+                            print(f"⚠️ {symbol} için 15m veri alınamadı, sinyal beklemeye alınmadı")
+                        else:
+                            prev_close = float(df15['close'].iloc[-2])
+                            prev_open = float(df15['open'].iloc[-2])
+                            # Bekleme başlangıcı ve istenen renk koşulu
+                            desired_color = 'green' if signal_type == 'ALIŞ' else 'red'
+                            global_pending_signals[symbol] = {
+                                'symbol': symbol,
+                                'signal_type': signal_type,
+                                'price': price,
+                                'volume_usd': volume_usd,
+                                'signals': signals,
+                                'desired_color': desired_color,
+                                'queued_at': datetime.now(),
+                            }
+                            print(f"⏳ {symbol} {signal_type} sinyali 15m kapanış onayı için kuyruğa alındı (hedef renk: {desired_color})")
+                    except Exception as e:
+                        print(f"⚠️ {symbol} 15m veri hatası: {e}")
                 
                 # Bekleme listesini güncelle
                 update_waiting_list(waiting_signals)
@@ -2554,6 +2636,9 @@ async def signal_processing_loop():
                 
                 # 6/6 sinyallerinin 30 dakika sonra doğrulanmasını kontrol et
                 await check_6_6_confirmations(positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals, cooldown_signals, sent_signals, active_signals, stats, profit_percent, stop_percent)
+
+                # Genel sinyaller için 15m kapanış onayı kontrolü
+                await check_general_confirmations(global_pending_signals, positions, active_signals, stats)
                 
                 # Saatlik taramanın zaman damgasını güncelle
                 global_last_signal_scan_time = now
@@ -2591,9 +2676,10 @@ async def signal_processing_loop():
             global_allowed_users = ALLOWED_USERS.copy()
             global_admin_users = ADMIN_USERS.copy()
             
-            # MongoDB'ye güncel istatistikleri kaydet
+            # MongoDB'ye güncel verileri kaydet
             save_stats_to_db(stats)
             save_active_signals_to_db(active_signals)
+            save_positions_to_db(positions)  # ✅ POZİSYONLARI DA KAYDET
             
 
             
@@ -2622,9 +2708,9 @@ async def signal_processing_loop():
                 save_previous_signals_to_db(previous_signals)
                 is_first = False  # Artık ilk çalıştırma değil
             
-            # Döngü sonunda bekleme süresi (10 dakika)
-            print("Tüm coinler kontrol edildi. 10 dakika bekleniyor...")
-            await asyncio.sleep(600)  # 10 dakika
+            # Döngü sonunda bekleme süresi (15 dakika)
+            print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
+            await asyncio.sleep(900)  # 15 dakika
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -2636,7 +2722,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(600)  # 10 dakika
+            await asyncio.sleep(900)  # 15 dakika
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle
@@ -2793,7 +2879,7 @@ def check_6_4_rule(buy_count, sell_count):
     """6/4 kuralını kontrol eder - en az 4 sinyal aynı yönde olmalı"""
     return buy_count >= 4 or sell_count >= 4
 
-def check_cooldown(symbol, cooldown_dict, hours=4):
+def check_cooldown(symbol, cooldown_dict, hours=8):  # ✅ 8 SAAT COOLDOWN
     """Cooldown kontrolü yapar"""
     if symbol in cooldown_dict:
         last_time = cooldown_dict[symbol]
@@ -2865,7 +2951,7 @@ def load_data_by_pattern(pattern, data_key="data", description="veri", transform
             else:
                 # Varsayılan transform: _id'den pattern'i çıkar ve data_key'i al
                 key = doc["_id"].replace(pattern.replace("^", "").replace("$", ""), "")
-                if data_key in doc:
+                if data_key and data_key in doc:
                     result[key] = doc[data_key]
                 else:
                     result[key] = doc
@@ -2929,6 +3015,84 @@ def safe_async_operation(operation_func, error_message="Asenkron işlem", defaul
 
 
 # === Genel Sinyal Hesaplama Yardımcı Fonksiyonları ===
+
+async def check_general_confirmations(pending_dict, positions, active_signals, stats):
+    """Genel sinyaller için 15m mum kapanış onayı kontrolü.
+    - ALIŞ: son 15m mum yeşil kapanmalı (close > open)
+    - SATIŞ: son 15m mum kırmızı kapanmalı (close < open)
+    Onay sağlanırsa sinyali gönderir ve kuyruğu temizler; sağlanmazsa iptal eder.
+    """
+    if not pending_dict:
+        return
+    for symbol in list(pending_dict.keys()):
+        data = pending_dict.get(symbol)
+        if not data:
+            continue
+        try:
+            df15 = await async_get_historical_data(symbol, '15m', 2)
+            if df15 is None or df15.empty or len(df15) < 2:
+                continue
+            last_open = float(df15['open'].iloc[-1])
+            last_close = float(df15['close'].iloc[-1])
+            is_green = last_close > last_open
+            desired = data.get('desired_color')
+            ok = (desired == 'green' and is_green) or (desired == 'red' and not is_green)
+            if ok:
+                message, _, target_price, stop_loss, stop_loss_str, leverage, special_signal = create_signal_message_new_64(
+                    data['symbol'], data['price'], data['signals'], data['volume_usd'], 1.5, 1.0
+                )
+                # 24 saatlik yıldız sinyali cooldown kontrolü (15m onay akışına taşındı)
+                if message and special_signal and global_6_6_last_signal_time:
+                    hours_since_last_star = (datetime.now() - global_6_6_last_signal_time).total_seconds() / 3600
+                    if hours_since_last_star < 24:
+                        print(f"⏰ Yıldızlı sinyal 24 saat limiti nedeniyle gönderilmedi: {data['symbol']} ({24 - hours_since_last_star:.1f} saat kaldı)")
+                        del pending_dict[symbol]
+                        continue
+                if message:
+                    position = {
+                        "type": data['signal_type'],
+                        "target": target_price,
+                        "stop": stop_loss,
+                        "open_price": data['price'],
+                        "stop_str": stop_loss_str,
+                        "signals": data['signals'],
+                        "leverage": leverage,
+                        "entry_time": str(datetime.now()),
+                        "entry_timestamp": datetime.now(),
+                        "is_special": special_signal
+                    }
+                    positions[data['symbol']] = position
+                    save_positions_to_db(positions)
+                    active_signals[data['symbol']] = {
+                        "symbol": data['symbol'],
+                        "type": data['signal_type'],
+                        "entry_price": format_price(data['price'], data['price']),
+                        "entry_price_float": data['price'],
+                        "target_price": format_price(target_price, data['price']),
+                        "stop_loss": format_price(stop_loss, data['price']),
+                        "signals": data['signals'],
+                        "leverage": leverage,
+                        "signal_time": str(datetime.now()),
+                        "current_price": format_price(data['price'], data['price']),
+                        "current_price_float": data['price'],
+                        "last_update": str(datetime.now()),
+                        "is_special": special_signal
+                    }
+                    save_active_signals_to_db(active_signals)
+                    stats["total_signals"] += 1
+                    stats["active_signals_count"] = len(active_signals)
+                    save_stats_to_db(stats)
+                    await send_signal_to_all_users(message)
+                    if special_signal:
+                        global global_6_6_last_signal_time
+                        global_6_6_last_signal_time = datetime.now()
+                    print(f"✅ {data['symbol']} {data['signal_type']} sinyali 15m kapanış onayı ile gönderildi")
+                del pending_dict[symbol]
+            else:
+                print(f"❌ {symbol} 15m kapanış onayı sağlanmadı, sinyal iptal edildi")
+                del pending_dict[symbol]
+        except Exception as e:
+            print(f"⚠️ {symbol} genel onay kontrol hatası: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

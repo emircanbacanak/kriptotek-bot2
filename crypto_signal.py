@@ -679,8 +679,7 @@ async def help_command(update, context):
 /listadmins - Admin listesini göster
 
 🧹 **Temizleme Komutları:**
-/clearprevious - Önceki sinyalleri sil
-/clearpositions - Pozisyonları sil
+/clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
 
 🔧 **Özel Yetkiler:**
 • Tüm komutlara erişim
@@ -1205,8 +1204,7 @@ async def setup_bot():
     app.add_handler(CommandHandler("adminekle", adminekle_command))
     app.add_handler(CommandHandler("adminsil", adminsil_command))
     app.add_handler(CommandHandler("listadmins", listadmins_command))
-    app.add_handler(CommandHandler("clearprevious", clear_previous_signals_command))
-    app.add_handler(CommandHandler("clearpositions", clear_positions_command))
+    app.add_handler(CommandHandler("clearall", clear_all_command))
     
     # Genel mesaj handler'ı
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -2382,7 +2380,18 @@ async def signal_processing_loop():
                         elif current_low <= pos["stop"]:
                             print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
                             # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
-                            cooldown_signals[(symbol, "ALIS")] = datetime.now()
+                            # Yalnızca bot sahibine STOP bilgisi gönder
+                            try:
+                                stop_msg = (
+                                    f"🛑 STOP\n"
+                                    f"<b>{symbol}</b> işlemi stop oldu.\n"
+                                    f"Çıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
+                                    f"Stop: <b>{format_price(pos['stop'], pos['open_price'])}</b>"
+                                )
+                                await send_telegram_message(stop_msg, BOT_OWNER_ID)
+                            except Exception as _e:
+                                pass
+                             
                             stop_cooldown[symbol] = datetime.now()
                             
                             # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
@@ -2479,7 +2488,18 @@ async def signal_processing_loop():
                             elif current_high >= pos["stop"]:
                                 print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
                                 # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
-                                cooldown_signals[(symbol, "SATIS")] = datetime.now()
+                                # Yalnızca bot sahibine STOP bilgisi gönder
+                                try:
+                                    stop_msg = (
+                                        f"🛑 STOP\n"
+                                        f"<b>{symbol}</b> işlemi stop oldu.\n"
+                                        f"Çıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
+                                        f"Stop: <b>{format_price(pos['stop'], pos['open_price'])}</b>"
+                                    )
+                                    await send_telegram_message(stop_msg, BOT_OWNER_ID)
+                                except Exception as _e:
+                                    pass
+                                 
                                 stop_cooldown[symbol] = datetime.now()
                                 
                                 # Stop olan coini stopped_coins'e ekle (tüm detaylarla)
@@ -2532,8 +2552,8 @@ async def signal_processing_loop():
                 
             # Aktif pozisyonlar varsa 10 dakika bekle, sonra yeni sinyal aramaya devam et
             if positions:
-                print(f"⏰ {len(positions)} aktif pozisyon var, 15 dakika bekleniyor...")
-                await asyncio.sleep(900)  # 15 dakika
+                print(f"⏰ {len(positions)} aktif pozisyon var, 10 dakika bekleniyor...")
+                await asyncio.sleep(600)  # 10 dakika
                 
             # Saatlik yeni sinyal taraması kontrolü
             global global_last_signal_scan_time
@@ -2709,8 +2729,8 @@ async def signal_processing_loop():
                 is_first = False  # Artık ilk çalıştırma değil
             
             # Döngü sonunda bekleme süresi (15 dakika)
-            print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
-            await asyncio.sleep(900)  # 15 dakika
+            print("Tüm coinler kontrol edildi. 30 dakika bekleniyor...")
+            await asyncio.sleep(1800)  # 30 dakika
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -2722,7 +2742,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(900)  # 15 dakika
+            await asyncio.sleep(1800)  # 30 dakika
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle
@@ -2824,6 +2844,24 @@ async def clear_previous_signals_command(update, context):
     msg = f"✅ {deleted_count} kayıt silindi. Initialized bayrağı: {'silindi' if init_deleted else 'mevcut değildi'}"
     await send_command_response(update, msg)
 
+    # Bellekteki önceki/pending sinyal durumlarını da temizle
+    try:
+        global previous_signals, global_pending_signals, global_6_6_pending_signals, global_waiting_signals
+        try:
+            previous_signals = {}
+        except NameError:
+            pass
+        global_pending_signals = {}
+        global_6_6_pending_signals = {}
+        try:
+            global_waiting_signals = {}
+        except NameError:
+            pass
+    except Exception:
+        pass
+    
+    await send_command_response(update, "✅ Önceki ve bekleyen sinyal kuyrukları temizlendi.")
+
 
 async def clear_positions_command(update, context):
     """Pozisyon verilerini MongoDB'den silme komutu (sadece bot sahibi)"""
@@ -2834,6 +2872,131 @@ async def clear_positions_command(update, context):
     await send_command_response(update, "🧹 Pozisyon verileri siliniyor...")
     deleted_count = clear_position_data_from_db()
     await send_command_response(update, f"✅ {deleted_count} pozisyon kaydı silindi.")
+
+    # Aktif sinyalleri ve istatistikleri de güncelle
+    try:
+        # Global bellek güncelle
+        global global_active_signals, global_stats
+        global_active_signals = {}
+        # DB'de aktif sinyalleri sıfırla
+        save_active_signals_to_db({})
+        
+        # Stats'ta aktif sinyal sayısını sıfırla
+        if isinstance(global_stats, dict):
+            global_stats["active_signals_count"] = 0
+            save_stats_to_db(global_stats)
+        
+        # local json dosyasını da boşalt
+        try:
+            with open('active_signals.json', 'w', encoding='utf-8') as f:
+                json.dump({
+                    "active_signals": {},
+                    "count": 0,
+                    "last_update": str(datetime.now())
+                }, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        
+        await send_command_response(update, "✅ Aktif sinyaller sıfırlandı ve istatistikler güncellendi (/active ve /stats güncel).")
+    except Exception as _e:
+        # Sessiz geç; en azından ana silme işlemi tamamlandı
+        pass
+
+async def clear_stats_command(update, context):
+    """İstatistikleri sıfırlar (sadece bot sahibi)"""
+    user_id, is_authorized = validate_user_command(update, require_owner=True)
+    if not is_authorized:
+        return
+    
+    await send_command_response(update, "🧹 İstatistikler sıfırlanıyor...")
+    try:
+        # Mevcut aktif sinyal sayısını DB'den al
+        active_signals = load_active_signals_from_db() or {}
+        new_stats = {
+            "total_signals": 0,
+            "successful_signals": 0,
+            "failed_signals": 0,
+            "total_profit_loss": 0.0,
+            "active_signals_count": len(active_signals),
+            "tracked_coins_count": 0,
+        }
+        # DB'ye yaz
+        save_stats_to_db(new_stats)
+        # Global belleği güncelle
+        global global_stats
+        if isinstance(global_stats, dict):
+            global_stats.clear()
+            global_stats.update(new_stats)
+        else:
+            global_stats = new_stats
+        await send_command_response(update, "✅ İstatistikler sıfırlandı. /stats güncel veriyi gösterecek.")
+    except Exception as e:
+        await send_command_response(update, f"❌ İstatistik sıfırlama hatası: {e}")
+
+async def clear_all_command(update, context):
+    """Tüm verileri temizler: pozisyonlar, aktif sinyaller, önceki sinyaller, bekleyen kuyruklar, istatistikler (sadece bot sahibi)"""
+    user_id, is_authorized = validate_user_command(update, require_owner=True)
+    if not is_authorized:
+        return
+    
+    await send_command_response(update, "🧹 Tüm veriler temizleniyor...")
+    try:
+        # 1) Pozisyonlar
+        pos_deleted = clear_position_data_from_db()
+        # Aktif sinyaller
+        save_active_signals_to_db({})
+        global global_active_signals
+        global_active_signals = {}
+        try:
+            with open('active_signals.json', 'w', encoding='utf-8') as f:
+                json.dump({
+                    "active_signals": {},
+                    "count": 0,
+                    "last_update": str(datetime.now())
+                }, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        
+        # 2) Önceki sinyaller ve initialized bayrağı
+        prev_deleted, init_deleted = clear_previous_signals_from_db()
+        
+        # 3) Bekleyen kuyruklar/bellek durumları
+        global global_pending_signals, global_6_6_pending_signals, global_waiting_signals
+        global_pending_signals = {}
+        global_6_6_pending_signals = {}
+        try:
+            global_waiting_signals = {}
+        except NameError:
+            pass
+        
+        # 4) İstatistikler
+        new_stats = {
+            "total_signals": 0,
+            "successful_signals": 0,
+            "failed_signals": 0,
+            "total_profit_loss": 0.0,
+            "active_signals_count": 0,
+            "tracked_coins_count": 0,
+        }
+        save_stats_to_db(new_stats)
+        global global_stats
+        if isinstance(global_stats, dict):
+            global_stats.clear()
+            global_stats.update(new_stats)
+        else:
+            global_stats = new_stats
+        
+        # Özet mesaj
+        summary = (
+            f"✅ Temizleme tamamlandı.\n"
+            f"• Pozisyon: {pos_deleted} silindi\n"
+            f"• Önceki sinyal: {prev_deleted} silindi (initialized: {'silindi' if init_deleted else 'yok'})\n"
+            f"• Bekleyen kuyruklar sıfırlandı\n"
+            f"• İstatistikler sıfırlandı"
+        )
+        await send_command_response(update, summary)
+    except Exception as e:
+        await send_command_response(update, f"❌ ClearAll hatası: {e}")
 
 # === Genel Sinyal Hesaplama Yardımcı Fonksiyonları ===
 async def calculate_signals_for_symbol(symbol, timeframes, tf_names):

@@ -538,14 +538,13 @@ global_active_signals = {}
 global_waiting_signals = {}  # {symbol: {"signals": {...}, "volume": float, "type": str, "timestamp": datetime}}
 global_waiting_previous_signals = {}  # Bekleme listesindeki sinyallerin önceki durumları
 
-# 6/6 özel sinyal sistemi için global değişkenler
-global_6_6_last_signal_time = None  # Son 6/6 sinyal zamanı (4 saat cooldown için)
+# 5/5 özel sinyal sistemi için global değişkenler
 global_successful_signals = {}
 global_failed_signals = {}
 # global_changed_symbols artık kullanılmıyor
 global_allowed_users = set()  # İzin verilen kullanıcılar
 global_admin_users = set()  # Admin kullanıcılar
-# Saatlik yeni sinyal taraması için zaman damgası (6/6 özel sinyaller hariç)
+# Saatlik yeni sinyal taraması için zaman damgası
 global_last_signal_scan_time = None
 
 # 15m mum kapanış onayı bekleyen genel sinyaller (ALIŞ/SATIŞ)
@@ -1293,12 +1292,12 @@ def format_volume(volume):
     else:
         return f"${volume:,.0f}"
 
-def create_signal_message_new_64(symbol, price, all_timeframes_signals, volume, profit_percent=3.0, stop_percent=2.0):
-    """6/6 sinyal sistemi - 1h,2h,4h,8h,12h,1d zaman dilimlerini kontrol et"""
+def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, profit_percent=3.0, stop_percent=2.0):
+    """5/5 sinyal sistemi - 1h,2h,4h,8h,1d zaman dilimlerini kontrol et"""
     price_str = format_price(price, price)
     
     # Tüm zaman dilimlerindeki sinyalleri kontrol et
-    timeframes = ['1h', '2h', '4h', '8h', '12h', '1d']
+    timeframes = ['1h', '2h', '4h', '8h', '1d']
     signal_values = []
     
     for tf in timeframes:
@@ -1308,8 +1307,8 @@ def create_signal_message_new_64(symbol, price, all_timeframes_signals, volume, 
     buy_signals = sum(1 for s in signal_values if s == 1)
     sell_signals = sum(1 for s in signal_values if s == -1)
     
-    # 6/6 kuralı: Tüm 6 sinyal aynı yönde olmalı
-    if buy_signals != 6 and sell_signals != 6:
+    # 5/5 kuralı: Tüm 5 sinyal aynı yönde olmalı
+    if buy_signals != 5 and sell_signals != 5:
         return None, None, None, None, None, None, None
     
     # Dominant sinyali belirle
@@ -1329,9 +1328,9 @@ def create_signal_message_new_64(symbol, price, all_timeframes_signals, volume, 
 
     leverage_reason = ""
     
-    # 6/6 kuralı: Tüm 6 zaman dilimi aynıysa 10x kaldıraçlı
-    if max(buy_signals, sell_signals) == 6:
-        print(f"{symbol} - 6/6 sinyal")
+    # 5/5 kuralı: Tüm 5 zaman dilimi aynıysa 10x kaldıraçlı
+    if max(buy_signals, sell_signals) == 5:
+        print(f"{symbol} - 5/5 sinyal")
     
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
@@ -1355,10 +1354,6 @@ def create_signal_message_new_64(symbol, price, all_timeframes_signals, volume, 
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""
 
     return message, dominant_signal, target_price, stop_loss, stop_loss_str, leverage, None
-
-
-
-
 
 async def async_get_historical_data(symbol, interval, lookback):
     """Binance Futures'den geçmiş verileri asenkron çek"""
@@ -1679,7 +1674,7 @@ async def get_active_high_volume_usdt_pairs(top_n=50):
     
     return uygun_pairs
 
-# check_special_signal fonksiyonu artık gerekli değil - 6/6 sistemi kullanılıyor
+# check_special_signal fonksiyonu artık gerekli değil - 5/5 sistemi kullanılıyor
 
 async def check_signal_potential(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals):
     """Bir sembolün sinyal potansiyelini kontrol eder, sinyal varsa detayları döndürür."""
@@ -1707,16 +1702,10 @@ async def check_signal_potential(symbol, positions, stop_cooldown, successful_si
         # İlk çalıştırmada kaydedilen sinyalleri kontrol et
         prev_buy_count, prev_sell_count = calculate_signal_counts(prev_signals, tf_names)
         
-        # 6/6 kuralı kontrol - genel fonksiyonu kullan
-        if not check_6_6_rule(buy_count, sell_count):
+        # 5/5 kuralı kontrol - sadece bu kural geçerli
+        if not check_5_5_rule(buy_count, sell_count):
             previous_signals[symbol] = current_signals.copy()
             return None
-        
-        # Eğer ilk çalıştırmada 4+ aynı sinyali varsa, değişiklik bekler
-        if (prev_buy_count >= 4 or prev_sell_count >= 4):
-            # Sinyal değişikliği var mı kontrol et
-            if current_signals == prev_signals:
-                return None
         
         # Sinyal türünü belirle
         if buy_count >= sell_count:
@@ -1726,24 +1715,23 @@ async def check_signal_potential(symbol, positions, stop_cooldown, successful_si
             sinyal_tipi = 'SATIS'
             dominant_signal = "SATIŞ"
         
-        # Öncelik hesapla - genel fonksiyonu kullan
-        priority = determine_signal_priority(buy_count, sell_count)
-        
         # Fiyat ve hacim bilgilerini al
         try:
             ticker = client.futures_ticker(symbol=symbol)
             if not ticker or 'price' not in ticker:
-                return None  # Sessizce atla
+                print(f"❌ {symbol} → Ticker verisi eksik, sinyal iptal edildi")
+                return None  # Sinyal iptal edildi
             
             price = float(ticker['price'])
             volume_usd = float(ticker.get('quoteVolume', 0))
             
             if price <= 0 or volume_usd <= 0:
-                return None  # Sessizce atla
+                print(f"❌ {symbol} → Fiyat ({price}) veya hacim ({volume_usd}) geçersiz, sinyal iptal edildi")
+                return None  # Sinyal iptal edildi
                 
         except Exception as e:
-            print(f"❌ {symbol} fiyat/hacim bilgisi alınamadı: {e}")
-            return None
+            print(f"❌ {symbol} → Fiyat/hacim bilgisi alınamadı: {e}, sinyal iptal edildi")
+            return None  # Sinyal iptal edildi
         
         return {
             'symbol': symbol,
@@ -1753,44 +1741,12 @@ async def check_signal_potential(symbol, positions, stop_cooldown, successful_si
             'signal_type': sinyal_tipi,
             'dominant_signal': dominant_signal,
             'buy_count': buy_count,
-            'sell_count': sell_count,
-            'priority': priority
+            'sell_count': sell_count
         }
         
     except Exception as e:
         print(f"❌ {symbol} sinyal potansiyeli kontrol hatası: {e}")
         return None
-
-
-def determine_signal_priority(buy_count, sell_count):
-    """Sinyal önceliğini belirler: 0=6/6 (geçerli), -1=geçersiz"""
-    max_count = max(buy_count, sell_count)
-    if max_count == 6:  # 6/6 - tek geçerli kategori (10x kaldıraç)
-        return 0
-    else:
-        return -1  # Geçersiz sinyal
-
-
-def select_priority_signals(potential_signals, max_signals=2):
-    """Sadece 6/6 sinyalleri seçer ve işler."""
-    if not potential_signals:
-        return [], []
-    
-    # Sadece 6/6 sinyalleri seç (priority == 0)
-    six_six_signals = [s for s in potential_signals if s['priority'] == 0]
-    
-    if six_six_signals:
-        # 6/6 sinyalleri seç - en yüksek hacimli olanı al
-        six_six_signals.sort(key=lambda x: x['volume_usd'], reverse=True)
-        selected_6_6 = six_six_signals[:max_signals]
-        print(f"⭐ 6/6 sinyal seçildi: {selected_6_6[0]['symbol']}")
-        return selected_6_6, []
-    
-    # 6/6 sinyal yoksa boş döndür
-    return [], []
-
-
-
 
 async def process_selected_signal(signal_data, positions, active_signals, stats):
     """Seçilen sinyali işler ve gönderir."""
@@ -1802,15 +1758,7 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
     
     try:
         # Mesaj oluştur ve gönder
-        message, _, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_64(symbol, price, current_signals, volume_usd, 3.0, 2.0)
-        
-        # 4 saatlik sinyal limiti (tüm 6/6 sinyaller için)
-        global global_6_6_last_signal_time
-        if global_6_6_last_signal_time:
-            hours_since_last = (datetime.now() - global_6_6_last_signal_time).total_seconds() / 3600
-            if hours_since_last < 4:
-                print(f"⏰ 6/6 sinyal 4 saat limiti nedeniyle gönderilmedi: {symbol} ({4 - hours_since_last:.1f} saat kaldı)")
-                return
+        message, _, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_55(symbol, price, current_signals, volume_usd, 3.0, 2.0)
         
         if message:
             # Pozisyonu kaydet
@@ -1859,9 +1807,6 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             
             # Sinyali gönder
             await send_signal_to_all_users(message)
-            
-            # 6/6 sinyal için 4 saat damgasını güncelle
-            global_6_6_last_signal_time = datetime.now()
             
             # Kaldıraç bilgisini göster
             leverage_text = "10x"  # Sabit 10x kaldıraç
@@ -1970,7 +1915,7 @@ async def signal_processing_loop():
     if db_stats:
         stats.update(db_stats)
     
-    # 6/6 sinyal sistemi için timeframe'ler - 6 zaman dilimi
+    # 5/5 sinyal sistemi için timeframe'ler - 5 zaman dilimi
     timeframes = {
         '1h': '1h',
         '2h': '2h', 
@@ -1980,7 +1925,7 @@ async def signal_processing_loop():
         '1d': '1d',
         '15m': '15m'  # 15m mum kapanış onayı için
     }
-    tf_names = ['1h', '2h', '4h', '8h', '12h', '1d']  # 6/6 sistemi
+    tf_names = ['1h', '2h', '4h', '8h', '1d']  # 5/5 sistemi
     
     
     print("🚀 Bot başlatıldı!")
@@ -2250,29 +2195,14 @@ async def signal_processing_loop():
                     print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                     continue
                 
-            # Aktif pozisyonlar varsa 10 dakika bekle, sonra yeni sinyal aramaya devam et
-            if positions:
-                print(f"⏰ {len(positions)} aktif pozisyon var, 10 dakika bekleniyor...")
-                await asyncio.sleep(600)  # 10 dakika
-                
-            # Saatlik yeni sinyal taraması kontrolü
-            global global_last_signal_scan_time
-            now = datetime.now()
-            should_scan_new_signals = False
-            if global_last_signal_scan_time is None:
-                should_scan_new_signals = True
-            else:
-                hours_since_last_scan = (now - global_last_signal_scan_time).total_seconds() / 3600
-                if hours_since_last_scan >= 1:
-                    should_scan_new_signals = True
-            
-            if should_scan_new_signals:
+            # Her zaman yeni sinyal ara (aktif pozisyon varken de)
                 # Eğer sinyal aramaya izin verilen saatlerdeysek normal işlemlere devam et
-                new_symbols = await get_active_high_volume_usdt_pairs(50)  # Sadece ilk 50 sembol
+                new_symbols = await get_active_high_volume_usdt_pairs(100)  # İlk 100 sembol
                 
                 # Aktif pozisyonları ve cooldown'daki coinleri koru
                 protected_symbols = set()
                 protected_symbols.update(positions.keys())  # Aktif pozisyonlar
+                protected_symbols.update(stop_cooldown.keys())  # Cooldown'daki coinler
 
                 
                 # Yeni sembollere korunan sembolleri ekle
@@ -2289,8 +2219,8 @@ async def signal_processing_loop():
                     if signal_result:
                         potential_signals.append(signal_result)
                 
-                # Sinyal önceliğine göre sırala ve en fazla 2 tanesini seç
-                selected_signals, waiting_signals = select_priority_signals(potential_signals, 2)
+                # Tüm 5/5 sinyalleri seç (limit yok)
+                selected_signals = select_all_signals(potential_signals)
                 
                 # Seçilen sinyalleri hemen göndermek yerine 15m kapanış onay kuyruğuna al
                 for signal_data in selected_signals:
@@ -2304,7 +2234,8 @@ async def signal_processing_loop():
                     try:
                         df15 = await async_get_historical_data(symbol, '15m', 2)
                         if df15 is None or df15.empty or len(df15) < 2:
-                            print(f"⚠️ {symbol} için 15m veri alınamadı, sinyal beklemeye alınmadı")
+                            print(f"❌ {symbol} için 15m veri alınamadı, sinyal beklemeye alınmadı - 15m veri eksik")
+                            continue  # Bu sinyali atla, sonrakine geç
                         else:
                             prev_close = float(df15['close'].iloc[-2])
                             prev_open = float(df15['open'].iloc[-2])
@@ -2319,50 +2250,32 @@ async def signal_processing_loop():
                                 'desired_color': desired_color,
                                 'queued_at': datetime.now(),
                             }
-                            print(f"⏳ {symbol} {signal_type} 6/6 sinyali 15m kapanış onayı için kuyruğa alındı (hedef renk: {desired_color})")
+                            print(f"⏳ {symbol} {signal_type} 5/5 sinyali 15m kapanış onayı için kuyruğa alındı (hedef renk: {desired_color})")
                     except Exception as e:
-                        print(f"⚠️ {symbol} 15m veri hatası: {e}")
+                        print(f"❌ {symbol} 15m veri hatası: {e}, sinyal beklemeye alınmadı")
+                        continue  # Bu sinyali atla, sonrakine geç
                 
                 # Bekleme listesini güncelle
-                update_waiting_list(waiting_signals)
+                update_waiting_list(selected_signals)
                 
                 # Bekleme listesindeki değişen sinyalleri kontrol et
                 changed_waiting_signals = await check_waiting_list_changes(positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals)
                 
-                # Değişen sinyaller varsa, bu döngüde gönderilen sinyal sayısını kontrol et
+                # Değişen sinyaller varsa, hepsini işle (limit yok)
                 if changed_waiting_signals:
-                    # Bu döngüde zaten kaç sinyal gönderildi?
-                    signals_sent_this_round = len(selected_signals)
-                    remaining_slots = max(0, 2 - signals_sent_this_round)
+                    # Tüm değişen sinyalleri hacme göre sırala
+                    sorted_changed = sorted(changed_waiting_signals, key=lambda x: -x['volume_usd'])
                     
-                    if remaining_slots > 0:
-                        # Değişen sinyalleri önceliğe göre sırala
-                        sorted_changed = sorted(changed_waiting_signals, key=lambda x: (x['priority'], -x['volume_usd']))
-                        selected_changed = sorted_changed[:remaining_slots]
-                        
-                        # Seçilen değişen sinyalleri gönder
-                        for signal_data in selected_changed:
-                            await process_selected_signal(signal_data, positions, active_signals, stats)
-                        
-                        # Gönderilmeyen değişen sinyalleri tekrar bekleme listesine al
-                        remaining_changed = sorted_changed[remaining_slots:]
-                        if remaining_changed:
-                            update_waiting_list(remaining_changed)
-                            print(f"🔄 {len(remaining_changed)} değişen sinyal tekrar bekleme listesine alındı")
-                    else:
-                        # Slot yoksa tekrar bekleme listesine al
-                        update_waiting_list(changed_waiting_signals)
-                        print(f"🔄 {len(changed_waiting_signals)} değişen sinyal bu döngüde 2 sinyal sınırı dolduğu için bekleme listesinde kaldı")
+                    # Tüm değişen sinyalleri gönder
+                    for signal_data in sorted_changed:
+                        await process_selected_signal(signal_data, positions, active_signals, stats)
+                    
+                    print(f"✅ {len(sorted_changed)} değişen sinyal işlendi")
                 
 
 
-                # 6/6 sinyaller için 15m kapanış onayı kontrolü
+                # 5/5 sinyaller için 15m kapanış onayı kontrolü
                 await check_general_confirmations(global_pending_signals, positions, active_signals, stats)
-                
-                # Saatlik taramanın zaman damgasını güncelle
-                global_last_signal_scan_time = now
-            else:
-                print("⏳ Yeni sinyal taraması saatlik sınıra takıldı, sadece aktif pozisyonlar takip ediliyor.")
         
             # Aktif sinyallerin fiyatlarını güncelle
             for symbol in list(active_signals.keys()):
@@ -2636,9 +2549,9 @@ def calculate_signal_counts(signals, tf_names):
     sell_count = sum(1 for s in signal_values if s == -1)
     return buy_count, sell_count
 
-def check_6_6_rule(buy_count, sell_count):
-    """6/6 kuralını kontrol eder - tüm 6 sinyal aynı yönde olmalı"""
-    return buy_count == 6 or sell_count == 6
+def check_5_5_rule(buy_count, sell_count):
+    """5/5 kuralını kontrol eder - tüm 5 sinyal aynı yönde olmalı"""
+    return buy_count == 5 or sell_count == 5
 
 def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜM SİNYALLER İÇİN
     """Cooldown kontrolü yapar - tüm sinyaller için 4 saat"""
@@ -2738,7 +2651,6 @@ def safe_mongodb_operation(operation_func, error_message="MongoDB işlemi", defa
 
 # === Genel Sinyal Hesaplama Yardımcı Fonksiyonları ===
 async def check_general_confirmations(pending_dict, positions, active_signals, stats):
-    global global_6_6_last_signal_time
     
     if not pending_dict:
         return
@@ -2760,16 +2672,10 @@ async def check_general_confirmations(pending_dict, positions, active_signals, s
                 current_price = float(df15['close'].iloc[-1])
                 
                 # Güncel fiyattan hedef ve stop hesapla
-                message, _, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_64(
+                message, _, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_55(
                     data['symbol'], current_price, data['signals'], data['volume_usd'], 3.0, 2.0
                 )
-                # 4 saatlik sinyal cooldown kontrolü (tüm 6/6 sinyaller için)
-                if message and global_6_6_last_signal_time:
-                    hours_since_last = (datetime.now() - global_6_6_last_signal_time).total_seconds() / 3600
-                    if hours_since_last < 4:
-                        print(f"⏰ 6/6 sinyal 4 saat limiti nedeniyle gönderilmedi: {data['symbol']} ({4 - hours_since_last:.1f} saat kaldı)")
-                        del pending_dict[symbol]
-                        continue
+
                 if message:
                     position = {
                         "type": data['signal_type'],
@@ -2803,15 +2709,23 @@ async def check_general_confirmations(pending_dict, positions, active_signals, s
                     stats["active_signals_count"] = len(active_signals)
                     save_stats_to_db(stats)
                     await send_signal_to_all_users(message)
-                    # 4 saat cooldown başlat
-                    global_6_6_last_signal_time = datetime.now()
-                    print(f"✅ {data['symbol']} {data['signal_type']} 6/6 sinyali 15m kapanış onayı ile gönderildi (giriş: {current_price:.6f})")
+                    print(f"✅ {data['symbol']} {data['signal_type']} 5/5 sinyali 15m kapanış onayı ile gönderildi (giriş: {current_price:.6f})")
                 del pending_dict[symbol]
             else:
                 print(f"❌ {symbol} 15m kapanış onayı sağlanmadı, sinyal iptal edildi")
                 del pending_dict[symbol]
         except Exception as e:
             print(f"⚠️ {symbol} genel onay kontrol hatası: {e}")
+
+def select_all_signals(potential_signals):
+    """Tüm 5/5 sinyalleri seçer ve işler."""
+    if not potential_signals:
+        return []
+    
+    # Tüm sinyalleri hacme göre sırala
+    all_signals = sorted(potential_signals, key=lambda x: x['volume_usd'], reverse=True)
+    print(f"✅ {len(all_signals)} 5/5 sinyal seçildi")
+    return all_signals
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -181,6 +181,10 @@ def load_active_signals_from_db():
         docs = mongo_collection.find({"_id": {"$regex": "^active_signal_"}})
         
         for doc in docs:
+            # Symbol alanı yoksa bu dokümanı atla
+            if "symbol" not in doc:
+                continue
+                
             symbol = doc["symbol"]
             result[symbol] = {
                 "symbol": doc["symbol"],

@@ -2339,8 +2339,8 @@ async def signal_processing_loop():
                 is_first = False  # Artık ilk çalıştırma değil
             
             # Döngü sonunda bekleme süresi (15 dakika)
-            print("Tüm coinler kontrol edildi. 30 dakika bekleniyor...")
-            await asyncio.sleep(1800)  # 30 dakika
+            print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
+            await asyncio.sleep(900)  # 15 dakika
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -2352,7 +2352,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(1800)  # 30 dakika
+            await asyncio.sleep(900)  # 15 dakika
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle

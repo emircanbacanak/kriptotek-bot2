@@ -5,6 +5,7 @@ if sys.platform.startswith("win"):
 import pandas as pd
 import ta
 from datetime import datetime, timedelta
+import telegram
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import json
 import aiohttp
@@ -172,25 +173,46 @@ def load_active_signals_from_db():
         docs = mongo_collection.find({"_id": {"$regex": "^active_signal_"}})
         
         for doc in docs:
-            # Symbol alanı yoksa bu dokümanı atla
-            if "symbol" not in doc:
+            # Data alanı varsa onu kullan, yoksa doğrudan dokümanı kullan
+            if "data" in doc:
+                data = doc["data"]
+                if "symbol" not in data:
+                    continue
+                symbol = data["symbol"]
+                result[symbol] = {
+                    "symbol": data.get("symbol", symbol),
+                    "type": data.get("type", "ALIŞ"),
+                    "entry_price": data.get("entry_price", "0"),
+                    "entry_price_float": data.get("entry_price_float", 0.0),
+                    "target_price": data.get("target_price", "0"),
+                    "stop_loss": data.get("stop_loss", "0"),
+                    "signals": data.get("signals", {}),
+                    "leverage": data.get("leverage", 10),
+                    "signal_time": data.get("signal_time", ""),
+                    "current_price": data.get("current_price", "0"),
+                    "current_price_float": data.get("current_price_float", 0.0),
+                    "last_update": data.get("last_update", "")
+                }
+            elif "symbol" in doc:
+                # Doğrudan doküman formatı
+                symbol = doc["symbol"]
+                result[symbol] = {
+                        "symbol": doc.get("symbol", symbol),
+                        "type": doc.get("type", "ALIŞ"),
+                        "entry_price": doc.get("entry_price", "0"),
+                        "entry_price_float": doc.get("entry_price_float", 0.0),
+                        "target_price": doc.get("target_price", "0"),
+                        "stop_loss": doc.get("stop_loss", "0"),
+                        "signals": doc.get("signals", {}),
+                        "leverage": doc.get("leverage", 10),
+                        "signal_time": doc.get("signal_time", ""),
+                        "current_price": doc.get("current_price", "0"),
+                        "current_price_float": doc.get("current_price_float", 0.0),
+                        "last_update": doc.get("last_update", "")
+                    }
+            else:
+                # Symbol bulunamadı, bu dokümanı atla
                 continue
-                
-            symbol = doc["symbol"]
-            result[symbol] = {
-                "symbol": doc["symbol"],
-                "type": doc["type"],
-                "entry_price": doc["entry_price"],
-                "entry_price_float": doc["entry_price_float"],
-                "target_price": doc["target_price"],
-                "stop_loss": doc["stop_loss"],
-                "signals": doc["signals"],
-                "leverage": doc["leverage"],
-                "signal_time": doc["signal_time"],
-                "current_price": doc["current_price"],
-                "current_price_float": doc["current_price_float"],
-                "last_update": doc["last_update"]
-            }
         
         print(f"✅ MongoDB'den {len(result)} aktif sinyal yüklendi")
         return result
@@ -205,7 +227,11 @@ def connect_mongodb():
     """MongoDB bağlantısını kur"""
     global mongo_client, mongo_db, mongo_collection
     try:
-        mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        mongo_client = MongoClient(MONGODB_URI, 
+                                  serverSelectionTimeoutMS=30000,
+                                  connectTimeoutMS=30000,
+                                  socketTimeoutMS=30000,
+                                  maxPoolSize=10)
         # Bağlantıyı test et
         mongo_client.admin.command('ping')
         mongo_db = mongo_client[MONGODB_DB]
@@ -218,6 +244,20 @@ def connect_mongodb():
     except Exception as e:
         print(f"❌ MongoDB bağlantı hatası: {e}")
         return False
+
+def ensure_mongodb_connection():
+    """MongoDB bağlantısının aktif olduğundan emin ol, değilse yeniden bağlan"""
+    global mongo_collection
+    try:
+        if mongo_collection is None:
+            return connect_mongodb()
+        
+        # Bağlantıyı test et
+        mongo_client.admin.command('ping')
+        return True
+    except Exception as e:
+        print(f"⚠️ MongoDB bağlantısı koptu, yeniden bağlanılıyor: {e}")
+        return connect_mongodb()
 
 def load_allowed_users():
     """İzin verilen kullanıcıları ve admin bilgilerini MongoDB'den yükle"""
@@ -346,56 +386,64 @@ def save_positions_to_db(positions):
                 print("❌ MongoDB bağlantısı kurulamadı, pozisyonlar kaydedilemedi")
                 return False
         
-        # Tüm pozisyonları tek seferde kaydet
-        for symbol, position in positions.items():
-            position_doc = {
-                "_id": f"position_{symbol}",
-                "symbol": symbol,
-                "type": position["type"],
-                "target": position["target"],
-                "stop": position["stop"],
-                "open_price": position["open_price"],
-                "stop_str": position["stop_str"],
-                "signals": position["signals"],
-                "leverage": position.get("leverage", 10),
-                "entry_time": position["entry_time"],
-                "entry_timestamp": position["entry_timestamp"].isoformat() if isinstance(position["entry_timestamp"], datetime) else position["entry_timestamp"],
-                "last_updated": str(datetime.now())
-            }
-            
-            # Genel DB fonksiyonunu kullan
-            if not save_data_to_db(f"position_{symbol}", position_doc, "Pozisyon"):
-                return False
+        # Önce tüm pozisyonları sil
+        mongo_collection.delete_many({"_id": {"$regex": "^position_"}})
         
-        print(f"✅ MongoDB'ye {len(positions)} pozisyon kaydedildi")
+        # Yeni pozisyonları ekle
+        for symbol, position in positions.items():
+            doc_id = f"position_{symbol}"
+            mongo_collection.insert_one({
+                "_id": doc_id,
+                "data": position,
+                "timestamp": datetime.now()
+            })
+        
+        print(f"✅ {len(positions)} pozisyon MongoDB'ye kaydedildi")
         return True
     except Exception as e:
-        print(f"❌ MongoDB'ye pozisyonlar kaydedilirken hata: {e}")
+        print(f"❌ Pozisyonlar MongoDB'ye kaydedilirken hata: {e}")
         return False
 
 def load_positions_from_db():
-    """Pozisyonları MongoDB'den yükle"""
+    """MongoDB'den pozisyonları yükler"""
     try:
-        def transform_position(doc):
-            # _id'den symbol'ü çıkar (position_BTCUSDT -> BTCUSDT)
-            symbol = doc["_id"].replace("position_", "")
-            return {symbol: {
-                "type": doc.get("type", "ALIS"),  # Varsayılan ALIS
-                "target": doc.get("target", 0.0),
-                "stop": doc.get("stop", 0.0),
-                "open_price": doc.get("open_price", 0.0),
-                "stop_str": doc.get("stop_str", ""),
-                "signals": doc.get("signals", {}),
-                "leverage": doc.get("leverage", 10),
-                "entry_time": doc.get("entry_time", ""),
-                "entry_timestamp": datetime.fromisoformat(doc["entry_timestamp"]) if isinstance(doc.get("entry_timestamp"), str) else doc.get("entry_timestamp", datetime.now()),
-
-            }}
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, pozisyonlar yüklenemedi")
+                return {}
         
-        # Pozisyon dokümanlarında "data" alanı yok, direkt dokümanı kullan
-        return load_data_by_pattern("^position_", None, "pozisyon", transform_position)
+        positions = {}
+        docs = mongo_collection.find({"_id": {"$regex": "^position_"}})
+        
+        for doc in docs:
+            symbol = doc["_id"].replace("position_", "")
+            positions[symbol] = doc["data"]
+        
+        print(f"📊 MongoDB'den {len(positions)} pozisyon yüklendi")
+        return positions
     except Exception as e:
         print(f"❌ MongoDB'den pozisyonlar yüklenirken hata: {e}")
+        return {}
+
+def load_stop_cooldown_from_db():
+    """MongoDB'den stop cooldown verilerini yükler"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, stop cooldown yüklenemedi")
+                return {}
+        
+        stop_cooldown = {}
+        docs = mongo_collection.find({"_id": {"$regex": "^stop_cooldown_"}})
+        
+        for doc in docs:
+            symbol = doc["_id"].replace("stop_cooldown_", "")
+            stop_cooldown[symbol] = doc["data"]
+        
+        print(f"📊 MongoDB'den {len(stop_cooldown)} stop cooldown yüklendi")
+        return stop_cooldown
+    except Exception as e:
+        print(f"❌ MongoDB'den stop cooldown yüklenirken hata: {e}")
         return {}
 
 def save_previous_signals_to_db(previous_signals):
@@ -538,8 +586,7 @@ global_admin_users = set()  # Admin kullanıcılar
 # Saatlik yeni sinyal taraması için zaman damgası
 global_last_signal_scan_time = None
 
-# 15m mum kapanış onayı bekleyen genel sinyaller (ALIŞ/SATIŞ)
-global_pending_signals = {}
+# 15m mum onayı kaldırıldı - direkt sinyal sistemi
 
 def is_authorized_chat(update):
     """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
@@ -655,6 +702,16 @@ async def send_signal_to_all_users(message):
                 sent_chats.add(str(group_id))
             except Exception as e:
                 print(f"❌ Gruba/Kanala sinyal gönderilemedi ({group_id}): {e}")
+
+async def send_admin_message(message):
+    """Bot sahibine özel mesaj gönder (sadece stop durumları için)"""
+    # Bot sahibine mesaj gönder (sadece admin gruplara)
+    for group_id in ADMIN_USERS:
+        try:
+            await send_telegram_message(message, group_id)
+            print(f"✅ Admin'e mesaj gönderildi: {group_id}")
+        except Exception as e:
+            print(f"❌ Admin'e mesaj gönderilemedi ({group_id}): {e}")
 
 # start_command fonksiyonunu kaldır
 
@@ -1051,8 +1108,11 @@ async def error_handler(update, context):
     if update and update.effective_chat and update.effective_user:
         if update.effective_chat.type == "private":
             user_id, is_authorized = validate_user_command(update, require_admin=False)
-            if is_authorized:
-                await send_command_response(update, "❌ Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
+            if is_authorized and not isinstance(context.error, telegram.error.TimedOut):
+                try:
+                    await send_command_response(update, "❌ Bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
+                except Exception as e:
+                    print(f"❌ Error handler'da mesaj gönderme hatası: {e}")
             # İzin verilmeyen kullanıcılar için hata mesajı bile gösterme
 
 async def handle_all_messages(update, context):
@@ -1300,14 +1360,34 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
         target_price = price * (1 + profit_percent / 100)
         stop_loss = price * (1 - stop_percent / 100)
         dominant_signal = "ALIŞ"
+        
+        # Debug: ALIŞ sinyali hesaplama
+        print(f"🔍 ALIŞ SİNYALİ HESAPLAMA:")
+        print(f"   Giriş: ${price:.6f}")
+        print(f"   Hedef: ${price:.6f} × (1 + {profit_percent}/100) = ${price:.6f} × 1.02 = ${target_price:.6f}")
+        print(f"   Stop: ${price:.6f} × (1 - {stop_percent}/100) = ${price:.6f} × 0.985 = ${stop_loss:.6f}")
     else:
         sinyal_tipi = "SATIŞ SİNYALİ"
         target_price = price * (1 - profit_percent / 100)
         stop_loss = price * (1 + stop_percent / 100)
         dominant_signal = "SATIŞ"
+        
+        # Debug: SATIŞ sinyali hesaplama
+        print(f"🔍 SATIŞ SİNYALİ HESAPLAMA:")
+        print(f"   Giriş: ${price:.6f}")
+        print(f"   Hedef: ${price:.6f} × (1 - {profit_percent}/100) = ${price:.6f} × 0.98 = ${target_price:.6f}")
+        print(f"   Stop: ${price:.6f} × (1 + {stop_percent}/100) = ${price:.6f} × 1.015 = ${stop_loss:.6f}")
     
     # Kaldıraç seviyesini belirle - sabit 10x
     leverage = 10  # Sabit 10x kaldıraç
+    
+    # Test hesaplama kontrolü
+    print(f"🧮 TEST HESAPLAMA KONTROLÜ:")
+    print(f"   Giriş: ${price:.6f}")
+    print(f"   Hedef: ${price:.6f} + %{profit_percent} = ${target_price:.6f}")
+    print(f"   Stop: ${price:.6f} - %{stop_percent} = ${stop_loss:.6f}")
+    print(f"   Hedef Fark: ${(target_price - price):.6f} (%{((target_price - price) / price * 100):.2f})")
+    print(f"   Stop Fark: ${(price - stop_loss):.6f} (%{((price - stop_loss) / price * 100):.2f})")
 
     leverage_reason = ""
     
@@ -1374,13 +1454,17 @@ def calculate_full_pine_signals(df, timeframe):
     Kriptotek Nokta Atışı Pivot - Pine Script'e birebir uyumlu AL/SAT sinyal hesaplaması.
     Zaman dilimine göre dinamik parametreler içerir.
     """
-    # --- Zaman dilimine göre dinamik parametreler ---
+    # --- Zaman dilimine göre dinamik parametreler (Pine Script'teki gibi) ---
     is_higher_tf = timeframe in ['1d', '4h', '1w']
     is_weekly = timeframe == '1w'
     is_daily = timeframe == '1d' 
     is_4h = timeframe == '4h'
+    is_2h = timeframe == '2h'
+    is_1h = timeframe == '1h'
+    is_30m = timeframe == '30m'
+    is_15m = timeframe == '15m'
     
-    # Dinamik parametreler (Pine Script'teki gibi)
+    # Pine Script'teki gibi dinamik parametreler
     if is_weekly:
         rsi_length = 28
         macd_fast = 18
@@ -1420,8 +1504,78 @@ def calculate_full_pine_signals(df, timeframe):
         volume_multiplier = 0.15
         rsi_overbought = 60
         rsi_oversold = 40
+    elif is_2h:
+        # 2h için özel parametreler (Pine Script'teki gibi)
+        rsi_length = 16
+        macd_fast = 10
+        macd_slow = 21
+        macd_signal = 8
+        short_ma_period = 10
+        long_ma_period = 55
+        mfi_length = 15
+        fib_lookback = 60
+        atr_period = 8
+        volume_multiplier = 0.25
+        rsi_overbought = 60
+        rsi_oversold = 40
+    elif is_1h:
+        # 1h için özel parametreler
+        rsi_length = 15
+        macd_fast = 10
+        macd_slow = 20
+        macd_signal = 9
+        short_ma_period = 9
+        long_ma_period = 50
+        mfi_length = 14
+        fib_lookback = 50
+        atr_period = 9
+        volume_multiplier = 0.35
+        rsi_overbought = 60
+        rsi_oversold = 40
+    elif is_30m:
+        # 30m için özel parametreler
+        rsi_length = 14
+        macd_fast = 10
+        macd_slow = 20
+        macd_signal = 9
+        short_ma_period = 9
+        long_ma_period = 50
+        mfi_length = 14
+        fib_lookback = 50
+        atr_period = 10
+        volume_multiplier = 0.4
+        rsi_overbought = 60
+        rsi_oversold = 40
+    elif is_15m:
+        # 15m için özel parametreler
+        rsi_length = 14
+        macd_fast = 10
+        macd_slow = 20
+        macd_signal = 9
+        short_ma_period = 9
+        long_ma_period = 50
+        mfi_length = 14
+        fib_lookback = 50
+        atr_period = 10
+        volume_multiplier = 0.4
+        rsi_overbought = 60
+        rsi_oversold = 40
+    elif timeframe == '8h':
+        # 8h için özel parametreler (Pine Script'teki gibi)
+        rsi_length = 17
+        macd_fast = 10
+        macd_slow = 21
+        macd_signal = 8
+        short_ma_period = 11
+        long_ma_period = 65
+        mfi_length = 16
+        fib_lookback = 80
+        atr_period = 8
+        volume_multiplier = 0.2
+        rsi_overbought = 60
+        rsi_oversold = 40
     else:
-        # Küçük zaman dilimleri (15m, 30m, 1h, 2h, 8h, 12h)
+        # Diğer zaman dilimleri için varsayılan
         rsi_length = 14
         macd_fast = 10
         macd_slow = 20
@@ -1461,6 +1615,12 @@ def calculate_full_pine_signals(df, timeframe):
             multiplier = atr_dynamic / 1.2
         elif is_4h:
             multiplier = atr_dynamic / 1.3
+        elif is_2h:
+            multiplier = atr_dynamic / 1.4
+        elif is_1h:
+            multiplier = atr_dynamic / 1.45
+        elif timeframe == '8h':
+            multiplier = atr_dynamic / 1.35
         else:
             multiplier = atr_dynamic / 1.5
             
@@ -1665,7 +1825,12 @@ async def get_active_high_volume_usdt_pairs(top_n=50):
 
 async def check_signal_potential(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals):
     """Bir sembolün sinyal potansiyelini kontrol eder, sinyal varsa detayları döndürür."""
-    # Stop cooldown kontrolü (1 saat)
+    # Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa yeni sinyal arama
+    if symbol in positions:
+        print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal aranmıyor")
+        return None
+    
+    # Stop cooldown kontrolü (4 saat)
     if check_cooldown(symbol, stop_cooldown, 4):
         return None
 
@@ -1690,13 +1855,17 @@ async def check_signal_potential(symbol, positions, stop_cooldown, successful_si
         prev_buy_count, prev_sell_count = calculate_signal_counts(prev_signals, tf_names)
         
         # 7/7 kuralı kontrol - sadece bu kural geçerli
+        print(f"🔍 {symbol} → Sinyal analizi: ALIŞ={buy_count}, SATIŞ={sell_count}")
+        
         if not check_7_7_rule(buy_count, sell_count):
             if buy_count > 0 or sell_count > 0:
-                print(f"ℹ️ {symbol} → 7/7 kuralı sağlanmadı: ALIŞ={buy_count}, SATIŞ={sell_count}")
+                print(f"❌ {symbol} → 7/7 kuralı sağlanmadı: ALIŞ={buy_count}, SATIŞ={sell_count} (7/7 olmalı!)")
+                print(f"   Detay: {current_signals}")
             previous_signals[symbol] = current_signals.copy()
             return None
         
-        print(f"🎯 {symbol} → 7/7 kuralı sağlandı! ALIŞ={buy_count}, SATIŞ={sell_count}")
+        print(f"✅ {symbol} → 7/7 kuralı sağlandı! ALIŞ={buy_count}, SATIŞ={sell_count}")
+        print(f"   Detay: {current_signals}")
         
         # Sinyal türünü belirle
         if buy_count >= sell_count:
@@ -1768,6 +1937,11 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
     price = signal_data['price']
     volume_usd = signal_data['volume_usd']
     sinyal_tipi = signal_data['signal_type']
+    
+    # Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa yeni sinyal gönderme
+    if symbol in positions:
+        print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal gönderilmiyor")
+        return
     
     try:
         # Mesaj oluştur ve gönder
@@ -1859,6 +2033,14 @@ async def check_waiting_list_changes(positions, stop_cooldown, successful_signal
     
     for symbol in list(global_waiting_signals.keys()):
         try:
+            # Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa bekleme listesinden çıkar
+            if symbol in positions:
+                print(f"⏸️ {symbol} → Zaten aktif pozisyon var, bekleme listesinden çıkarılıyor")
+                del global_waiting_signals[symbol]
+                if symbol in global_waiting_previous_signals:
+                    del global_waiting_previous_signals[symbol]
+                continue
+            
             waiting_data = global_waiting_signals[symbol]
             wait_until = waiting_data.get('wait_until')
             original_signals = waiting_data.get('original_signals', {})
@@ -1900,11 +2082,169 @@ async def check_waiting_list_changes(positions, stop_cooldown, successful_signal
     
     return changed_signals
 
+async def check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown):
+    """Bot başlangıcında mevcut pozisyonları ve cooldown'ları kontrol eder"""
+    print("🔍 Mevcut pozisyonlar ve cooldown'lar kontrol ediliyor...")
+    
+    # 1. Aktif pozisyonları kontrol et
+    for symbol in list(positions.keys()):
+        try:
+            print(f"🔍 {symbol} pozisyonu kontrol ediliyor...")
+            
+            # Güncel fiyat bilgisini al
+            df1m = await async_get_historical_data(symbol, '1m', 1)
+            if df1m is None or df1m.empty:
+                print(f"⚠️ {symbol} 1m veri alınamadı, atlanıyor")
+                continue
+            
+            # Güncel fiyat
+            close_price = float(df1m['close'].iloc[-1])
+            
+            position = positions[symbol]
+            entry_price = position["open_price"]
+            target_price = position["target"]
+            stop_loss = position["stop"]
+            signal_type = position["type"]
+            
+            # ALIŞ sinyali için hedef/stop kontrolü
+            if signal_type == "ALIŞ":
+                # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                if close_price >= target_price:
+                    print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                    
+                    # İstatistikleri güncelle
+                    stats["successful_signals"] += 1
+                    profit_percentage = ((target_price - entry_price) / entry_price) * 100
+                    profit_usd = 100 * profit_percentage / 100
+                    stats["total_profit_loss"] += profit_usd
+                    
+                    # Cooldown'a ekle (4 saat)
+                    stop_cooldown[symbol] = datetime.now()
+                    save_stop_cooldown_to_db(stop_cooldown)
+                    
+                    # Pozisyon ve aktif sinyali kaldır
+                    del positions[symbol]
+                    if symbol in active_signals:
+                        del active_signals[symbol]
+                    save_positions_to_db(positions)
+                    save_active_signals_to_db(active_signals)
+                    
+                    # Herkese hedef mesajı gönder
+                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                    await send_signal_to_all_users(target_message)
+                    
+                # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                elif close_price <= stop_loss:
+                    print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                    
+                    # İstatistikleri güncelle
+                    stats["failed_signals"] += 1
+                    loss_percentage = ((entry_price - stop_loss) / entry_price) * 100
+                    loss_usd = 100 * loss_percentage / 100
+                    stats["total_profit_loss"] -= loss_usd
+                    
+                    # Cooldown'a ekle (4 saat)
+                    stop_cooldown[symbol] = datetime.now()
+                    save_stop_cooldown_to_db(stop_cooldown)
+                    
+                    # Pozisyon ve aktif sinyali kaldır
+                    del positions[symbol]
+                    if symbol in active_signals:
+                        del active_signals[symbol]
+                    save_positions_to_db(positions)
+                    save_active_signals_to_db(active_signals)
+                    
+                    # Sadece bot sahibine stop mesajı gönder
+                    stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                    await send_admin_message(stop_message)
+            
+            # SATIŞ sinyali için hedef/stop kontrolü
+            elif signal_type == "SATIŞ":
+                # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                if close_price <= target_price:
+                    print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                    
+                    # İstatistikleri güncelle
+                    stats["successful_signals"] += 1
+                    profit_percentage = ((entry_price - target_price) / entry_price) * 100
+                    profit_usd = 100 * profit_percentage / 100
+                    stats["total_profit_loss"] += profit_usd
+                    
+                    # Cooldown'a ekle (4 saat)
+                    stop_cooldown[symbol] = datetime.now()
+                    save_stop_cooldown_to_db(stop_cooldown)
+                    
+                    # Pozisyon ve aktif sinyali kaldır
+                    del positions[symbol]
+                    if symbol in active_signals:
+                        del active_signals[symbol]
+                    save_positions_to_db(positions)
+                    save_active_signals_to_db(active_signals)
+                    
+                    # Herkese hedef mesajı gönder
+                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                    await send_signal_to_all_users(target_message)
+                    
+                # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                elif close_price >= stop_loss:
+                    print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                    
+                    # İstatistikleri güncelle
+                    stats["failed_signals"] += 1
+                    loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
+                    loss_usd = 100 * loss_percentage / 100
+                    stats["total_profit_loss"] -= loss_usd
+                    
+                    # Cooldown'a ekle (4 saat)
+                    stop_cooldown[symbol] = datetime.now()
+                    save_stop_cooldown_to_db(stop_cooldown)
+                    
+                    # Pozisyon ve aktif sinyali kaldır
+                    del positions[symbol]
+                    if symbol in active_signals:
+                        del active_signals[symbol]
+                    save_positions_to_db(positions)
+                    save_active_signals_to_db(active_signals)
+                    
+                    # Sadece bot sahibine stop mesajı gönder
+                    stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                    await send_admin_message(stop_message)
+                    
+        except Exception as e:
+            print(f"⚠️ {symbol} pozisyon kontrolü sırasında hata: {e}")
+            continue
+    
+    # 2. Cooldown'ları kontrol et (süresi dolmuş mu?)
+    expired_cooldowns = []
+    for symbol, cooldown_time in list(stop_cooldown.items()):
+        if isinstance(cooldown_time, str):
+            cooldown_time = datetime.fromisoformat(cooldown_time)
+        
+        time_diff = (datetime.now() - cooldown_time).total_seconds() / 3600
+        if time_diff >= 4:  # 4 saat geçmişse
+            expired_cooldowns.append(symbol)
+            print(f"✅ {symbol} cooldown süresi doldu, yeni sinyal aranabilir")
+    
+    # Süresi dolan cooldown'ları kaldır
+    for symbol in expired_cooldowns:
+        del stop_cooldown[symbol]
+    if expired_cooldowns:
+        save_stop_cooldown_to_db(stop_cooldown)
+        print(f"🧹 {len(expired_cooldowns)} cooldown temizlendi")
+    
+    # 3. Stats'ı güncelle
+    stats["active_signals_count"] = len(active_signals)
+    save_stats_to_db(stats)
+    
+    print(f"✅ Bot başlangıcı kontrolü tamamlandı: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
+    
+    print("✅ Bot başlangıcı kontrolü tamamlandı")
+
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
-    # Profit/Stop parametreleri
-    profit_percent = 2.0
-    stop_percent = 1.5
+    # Profit/Stop parametreleri - TAM DEĞERLER
+    profit_percent = 2.0  # %2 hedef
+    stop_percent = 1.5    # %1.5 stop
 
     positions = dict()  # {symbol: position_info}
 
@@ -1988,20 +2328,85 @@ async def signal_processing_loop():
         
         print(f"📊 {len(positions)} aktif pozisyon ve {len(previous_signals)} önceki sinyal yüklendi")
         print(f"📈 {len(active_signals)} aktif sinyal oluşturuldu")
+        
+        # Bot başlangıcında mevcut durumları kontrol et
+        print("🔄 Bot başlangıcında mevcut durumlar kontrol ediliyor...")
+        await check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown)
     
     while True:
         try:
+            # MongoDB bağlantısını kontrol et
+            if not ensure_mongodb_connection():
+                print("⚠️ MongoDB bağlantısı kurulamadı, 30 saniye bekleniyor...")
+                await asyncio.sleep(30)
+                continue
+            
+            # MongoDB'den güncel verileri yükle (her döngüde)
+            positions = load_positions_from_db()
+            active_signals = load_active_signals_from_db()
+            stats = load_stats_from_db()
+            stop_cooldown = load_stop_cooldown_from_db()
+            
+            # Aktif sinyalleri positions ile senkronize et (her döngüde)
+            for symbol in list(active_signals.keys()):
+                if symbol not in positions:
+                    # Sadece ilk kez mesaj yazdır
+                    attr_name7 = f'_first_position_missing_{symbol}'
+                    if not hasattr(signal_processing_loop, attr_name7):
+                        print(f"⚠️ {symbol} → Positions'da yok, aktif sinyallerden kaldırılıyor")
+                        setattr(signal_processing_loop, attr_name7, False)
+                    del active_signals[symbol]
+                    save_active_signals_to_db(active_signals)
+                else:
+                    # Positions'daki güncel verileri active_signals'a yansıt
+                    position = positions[symbol]
+                    if "entry_price_float" in active_signals[symbol]:
+                        active_signals[symbol].update({
+                            "target_price": format_price(position["target"], active_signals[symbol]["entry_price_float"]),
+                            "stop_loss": format_price(position["stop"], active_signals[symbol]["entry_price_float"]),
+                            "leverage": position.get("leverage", 10)
+                        })
+            
+            # Stats'ı güncelle
+            stats["active_signals_count"] = len(active_signals)
+            save_stats_to_db(stats)
+            
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_status'):
+                print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal")
+                signal_processing_loop._first_status = False
+            
+            # Aktif pozisyonları ve cooldown'daki coinleri korumalı semboller listesine ekle
+            protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
+            
+            # Sinyal arama için kullanılacak sembolleri filtrele
+            new_symbols = await get_active_high_volume_usdt_pairs(100)  # İlk 100 sembol
+            symbols = [s for s in new_symbols if s not in protected_symbols]
+            
+            if not symbols:
+                # Sadece ilk kez mesaj yazdır
+                if not hasattr(signal_processing_loop, '_first_all_protected'):
+                    print("⚠️ Tüm coinler korumalı (aktif pozisyon veya cooldown)")
+                    signal_processing_loop._first_all_protected = False
+                await asyncio.sleep(60)
+                continue
+            
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_coin_search'):
+                print(f"🔍 {len(symbols)} coin'de sinyal aranacak (aktif pozisyon: {len(positions)}, cooldown: {len(stop_cooldown)})")
+                signal_processing_loop._first_coin_search = False
+            
             # Aktif pozisyonları kontrol etmeye devam et
             for symbol, pos in list(positions.items()):
                 try:
-                    df = await async_get_historical_data(symbol, '1h', 1)  # Son 1 mumu al
-                    if df is None or df.empty:
-                        print(f"❌ {symbol} pozisyon kontrolü için fiyat verisi alınamadı")
+                    # Güncel fiyat bilgisini al
+                    df1m = await async_get_historical_data(symbol, '1m', 1)
+                    if df1m is None or df1m.empty:
+                        print(f"❌ {symbol} pozisyon kontrolü için 1m veri alınamadı")
                         continue
                     
-                    last_price = float(df['close'].iloc[-1])
-                    current_high = float(df['high'].iloc[-1])
-                    current_low = float(df['low'].iloc[-1])
+                    # Güncel fiyat
+                    last_price = float(df1m['close'].iloc[-1])
                     
                     if last_price is None or last_price <= 0:
                         print(f"❌ {symbol} pozisyon kontrolü için geçersiz fiyat: {last_price}")
@@ -2013,14 +2418,22 @@ async def signal_processing_loop():
                         active_signals[symbol]["current_price_float"] = last_price
                         active_signals[symbol]["last_update"] = str(datetime.now())
                     
-                    # 1h mumunun high/low değerlerine bak
+                    # Sadece ilk kez mesaj yazdır
+                    attr_name5 = f'_first_price_check_{symbol}'
+                    if not hasattr(signal_processing_loop, attr_name5):
+                        print(f"🔍 {symbol} fiyat kontrolü: Güncel: {last_price:.6f}")
+                        setattr(signal_processing_loop, attr_name5, False)
+                    
+                    # Hedef/stop kontrollerine bak
                     if pos["type"] == "ALIŞ":
-                        # Hedef kontrolü: High fiyatı hedefe ulaştı mı?
-                        if current_high >= pos["target"]:
+                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                        if last_price >= pos["target"]:
                             print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! Çıkış: {format_price(last_price)}")
                             msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                             await send_signal_to_all_users(msg)
                             # 4 saat cooldown başlat (hedef sonrası)
+                            stop_cooldown[symbol] = datetime.now()
+                            save_stop_cooldown_to_db(stop_cooldown)
                             
                             # Başarılı sinyal olarak kaydet
                             leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
@@ -2059,8 +2472,8 @@ async def signal_processing_loop():
                             # Pozisyonu veritabanından kaldır
                             remove_position_from_db(symbol)
                             del positions[symbol]
-                        # Stop kontrolü: Low fiyatı stop'a ulaştı mı?
-                        elif current_low <= pos["stop"]:
+                        # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                        elif last_price <= pos["stop"]:
                             print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
                             # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
                             # Yalnızca bot sahibine STOP bilgisi gönder
@@ -2077,6 +2490,7 @@ async def signal_processing_loop():
                              
                             # 4 saat cooldown başlat (stop sonrası)
                             stop_cooldown[symbol] = datetime.now()
+                            save_stop_cooldown_to_db(stop_cooldown)
 
                             # Başarısız sinyal olarak kaydet
                             loss_percent = -stop_percent
@@ -2117,12 +2531,14 @@ async def signal_processing_loop():
                             remove_position_from_db(symbol)
                             del positions[symbol]
                         elif pos["type"] == "SATIŞ":
-                            # Hedef kontrolü: Low fiyatı hedefe ulaştı mı?
-                            if current_low <= pos["target"]:
+                            # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                            if last_price <= pos["target"]:
                                 print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! Çıkış: {format_price(last_price)}")
                                 msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
                                 await send_signal_to_all_users(msg)
                                 # 4 saat cooldown başlat (hedef sonrası)
+                                stop_cooldown[symbol] = datetime.now()
+                                save_stop_cooldown_to_db(stop_cooldown)
                                 
                                 # Başarılı sinyal olarak kaydet
                                 leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
@@ -2154,8 +2570,8 @@ async def signal_processing_loop():
                                 # Pozisyonu veritabanından kaldır
                                 remove_position_from_db(symbol)
                                 del positions[symbol]
-                            # Stop kontrolü: High fiyatı stop'a ulaştı mı?
-                            elif current_high >= pos["stop"]:
+                            # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                            elif last_price >= pos["stop"]:
                                 print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
                                 # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
                                 # Yalnızca bot sahibine STOP bilgisi gönder
@@ -2172,6 +2588,7 @@ async def signal_processing_loop():
                                  
                                 # 4 saat cooldown başlat (stop sonrası)
                                 stop_cooldown[symbol] = datetime.now()
+                                save_stop_cooldown_to_db(stop_cooldown)
 
                                 # Başarısız sinyal olarak kaydet
                                 loss_percent = -stop_percent
@@ -2207,9 +2624,16 @@ async def signal_processing_loop():
                     print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
                     continue
             
-            # Her zaman yeni sinyal ara (aktif pozisyon varken de)
+            # Her zaman yeni sinyal ara (aktif pozisyon varken de) - ZORUNLU!
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_signal_search'):
+                print("🚀 YENİ SİNYAL ARAMA BAŞLATILIYOR (aktif sinyal varken de devam eder)")
+                signal_processing_loop._first_signal_search = False
             new_symbols = await get_active_high_volume_usdt_pairs(100)  # İlk 100 sembol
-            print(f"🔍 {len(new_symbols)} kripto taranacak")
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_crypto_count'):
+                print(f"🔍 {len(new_symbols)} kripto taranacak")
+                signal_processing_loop._first_crypto_count = False
             
             # Aktif pozisyonları ve cooldown'daki coinleri koru
             protected_symbols = set()
@@ -2222,7 +2646,13 @@ async def signal_processing_loop():
                 if protected_symbol not in symbols:
                     symbols.append(protected_symbol)
             
-            print(f"📊 Toplam {len(symbols)} sembol kontrol edilecek")
+            # Aktif pozisyonları ve cooldown'daki coinleri yeni sembol listesinden çıkar
+            symbols = [s for s in symbols if s not in protected_symbols]
+            
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_symbol_count'):
+                print(f"📊 Toplam {len(symbols)} sembol kontrol edilecek (aktif pozisyonlar ve cooldown'daki coinler hariç)")
+                signal_processing_loop._first_symbol_count = False
             potential_signals = []
             
             # Tüm semboller için sinyal potansiyelini kontrol et
@@ -2233,9 +2663,16 @@ async def signal_processing_loop():
                 signal_result = await check_signal_potential(symbol, positions, stop_cooldown, successful_signals, failed_signals, timeframes, tf_names, previous_signals)
                 if signal_result:
                     potential_signals.append(signal_result)
-                    print(f"🎯 {symbol} için 7/7 sinyal bulundu!")
+                    # Sadece ilk kez mesaj yazdır
+                    attr_name6 = f'_first_signal_found_{symbol}'
+                    if not hasattr(signal_processing_loop, attr_name6):
+                        print(f"🎯 {symbol} için 7/7 sinyal bulundu!")
+                        setattr(signal_processing_loop, attr_name6, False)
             
-            print(f"📈 Toplam {len(potential_signals)} potansiyel sinyal bulundu")
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_potential_count'):
+                print(f"📈 Toplam {len(potential_signals)} potansiyel sinyal bulundu")
+                signal_processing_loop._first_potential_count = False
             
             # İlk çalıştırmada tarama tamamlandıktan sonra sinyalleri kaydet
             if is_first:
@@ -2255,10 +2692,16 @@ async def signal_processing_loop():
                 immediate_signals = selected_signals[:5]  # İlk 5 sinyal
                 waiting_signals = selected_signals[5:]   # Geri kalanlar beklemeye
                 
-                print(f"🚀 Hemen işlenecek: {len(immediate_signals)} sinyal (15m onay için)")
-                print(f"⏳ Beklemeye alınacak: {len(waiting_signals)} sinyal (30dk sonra)")
+
                 
-                # İlk 5 sinyali hemen 15m kapanış onay kuyruğuna al
+                # Sadece ilk kez mesaj yazdır
+                if not hasattr(signal_processing_loop, '_first_signal_processing'):
+                    print(f"🚀 Hemen işlenecek: {len(immediate_signals)} sinyal (direkt sinyal)")
+                    print(f"⏳ Beklemeye alınacak: {len(waiting_signals)} sinyal (30dk sonra)")
+                    print("💡 Yeni sinyaller direkt işleniyor veya 30dk beklemeye alınıyor...")
+                    signal_processing_loop._first_signal_processing = False
+                
+                # İlk 5 sinyal direkt sinyal veriyor
                 for signal_data in immediate_signals:
                     symbol = signal_data['symbol']
                     signal_type = signal_data['signal_type']
@@ -2266,30 +2709,9 @@ async def signal_processing_loop():
                     volume_usd = signal_data['volume_usd']
                     signals = signal_data['signals']
 
-                    # 15 dakikalık mum (15m) son mum rengini kontrol etmek için bekleme başlat
-                    try:
-                        df15 = await async_get_historical_data(symbol, '15m', 2)
-                        if df15 is None or df15.empty or len(df15) < 2:
-                            print(f"❌ {symbol} için 15m veri alınamadı, sinyal beklemeye alınmadı - 15m veri eksik")
-                            continue  # Bu sinyali atla, sonrakine geç
-                        else:
-                            prev_close = float(df15['close'].iloc[-2])
-                            prev_open = float(df15['open'].iloc[-2])
-                            # Bekleme başlangıcı ve istenen renk koşulu
-                            desired_color = 'green' if signal_type == 'ALIŞ' else 'red'
-                            global_pending_signals[symbol] = {
-                                'symbol': symbol,
-                                'signal_type': signal_type,
-                                'price': price,
-                                'volume_usd': volume_usd,
-                                'signals': signals,
-                                'desired_color': desired_color,
-                                'queued_at': datetime.now(),
-                            }
-                            print(f"⏳ {symbol} {signal_type} 7/7 sinyali 15m kapanış onayı için kuyruğa alındı (hedef renk: {desired_color})")
-                    except Exception as e:
-                        print(f"❌ {symbol} 15m veri hatası: {e}, sinyal beklemeye alınmadı")
-                        continue  # Bu sinyali atla, sonrakine geç
+                    # Direkt sinyal ver
+                    await process_selected_signal(signal_data, positions, active_signals, stats)
+                    print(f"🚀 {symbol} {signal_type} 7/7 sinyali direkt gönderildi (hacim: {volume_usd:,.0f})")
                 
                 # Geri kalan sinyalleri 30dk beklemeye al
                 if waiting_signals:
@@ -2319,7 +2741,10 @@ async def signal_processing_loop():
                 
                 # Değişen sinyaller varsa, hepsini işle (limit yok)
                 if changed_waiting_signals:
-                    print(f"🔄 {len(changed_waiting_signals)} sinyal bekleme listesinden değişiklik ile geldi")
+                    # Sadece ilk kez mesaj yazdır
+                    if not hasattr(signal_processing_loop, '_first_changed_signals'):
+                        print(f"🔄 {len(changed_waiting_signals)} sinyal bekleme listesinden değişiklik ile geldi")
+                        signal_processing_loop._first_changed_signals = False
                     # Tüm değişen sinyalleri hacme göre sırala
                     sorted_changed = sorted(changed_waiting_signals, key=lambda x: -x['volume_usd'])
                     
@@ -2327,34 +2752,268 @@ async def signal_processing_loop():
                     for signal_data in sorted_changed:
                         await process_selected_signal(signal_data, positions, active_signals, stats)
                     
-                    print(f"✅ {len(sorted_changed)} değişen sinyal işlendi")
+                    # Sadece ilk kez mesaj yazdır
+                    if not hasattr(signal_processing_loop, '_first_changed_processed'):
+                        print(f"✅ {len(sorted_changed)} değişen sinyal işlendi")
+                        signal_processing_loop._first_changed_processed = False
                 
-                # Toplam işlenen sinyal sayısını göster
+                # Toplam işlenen sinyal sayısını göster (sadece ilk kez)
                 total_processed = len(immediate_signals) + len(changed_waiting_signals)
-                print(f"📊 Toplam işlenen sinyal: {total_processed} (Hemen: {len(immediate_signals)}, Değişen: {len(changed_waiting_signals)})")
+                if not hasattr(signal_processing_loop, '_first_total_processed'):
+                    print(f"📊 Toplam işlenen sinyal: {total_processed} (Hemen: {len(immediate_signals)}, Değişen: {len(changed_waiting_signals)})")
+                    signal_processing_loop._first_total_processed = False
             
-            # 7/7 sinyaller için 15m kapanış onayı kontrolü
-            await check_general_confirmations(global_pending_signals, positions, active_signals, stats)
+            # Yeni sinyal aramaya devam et
             
-            # Önceki beklemeye alınan sinyalleri de kontrol et
-            if global_pending_signals:
-                print(f"🔍 {len(global_pending_signals)} önceki sinyal 15m onay için bekliyor...")
-                await check_general_confirmations(global_pending_signals, positions, active_signals, stats)
+            # Sadece ilk kez mesaj yazdır
+            if not hasattr(signal_processing_loop, '_first_loop'):
+                print("🚀 Yeni sinyal aramaya devam ediliyor...")
+                signal_processing_loop._first_loop = False
         
-            # Aktif sinyallerin fiyatlarını güncelle
+            # Aktif sinyallerin fiyatlarını güncelle ve hedef/stop kontrolü yap
+            if active_signals:
+                # Sadece ilk kez mesaj yazdır
+                if not hasattr(signal_processing_loop, '_first_active_check'):
+                    print(f"🔍 AKTİF SİNYAL KONTROLÜ BAŞLATILIYOR... ({len(active_signals)} aktif sinyal)")
+                    for symbol in list(active_signals.keys()):
+                        print(f"   📊 {symbol}: {active_signals[symbol].get('type', 'N/A')} - Giriş: ${active_signals[symbol].get('entry_price_float', 0):.6f}")
+                    signal_processing_loop._first_active_check = False
+            else:
+                # Sadece ilk kez mesaj yazdır
+                if not hasattr(signal_processing_loop, '_first_no_active'):
+                    print("ℹ️ Aktif sinyal yok, kontrol atlanıyor")
+                    signal_processing_loop._first_no_active = False
+                continue
+            
             for symbol in list(active_signals.keys()):
                 if symbol not in positions:  # Pozisyon kapandıysa aktif sinyalden kaldır
                     del active_signals[symbol]
                     continue
+                
                 try:
-                    df = await async_get_historical_data(symbol, '4h', 1)
-                    last_price = float(df['close'].iloc[-1])
+                    # Sadece ilk kez mesaj yazdır
+                    attr_name = f'_first_active_check_{symbol}'
+                    if not hasattr(signal_processing_loop, attr_name):
+                        print(f"🔍 {symbol} aktif sinyal kontrolü başlatılıyor...")
+                        setattr(signal_processing_loop, attr_name, False)
+                    
+                    # Güncel fiyat bilgisini al
+                    df1m = await async_get_historical_data(symbol, '1m', 1)
+                    if df1m is None or df1m.empty:
+                        print(f"⚠️ {symbol} 1m veri alınamadı, atlanıyor")
+                        continue
+                    
+                    # Güncel fiyat
+                    last_price = float(df1m['close'].iloc[-1])
                     active_signals[symbol]["current_price"] = format_price(last_price, active_signals[symbol]["entry_price_float"])
                     active_signals[symbol]["current_price_float"] = last_price
                     active_signals[symbol]["last_update"] = str(datetime.now())
+                    
+                    # Hedef ve stop kontrolü
+                    entry_price = active_signals[symbol]["entry_price_float"]
+                    target_price = float(active_signals[symbol]["target_price"].replace('$', '').replace(',', ''))
+                    stop_loss = float(active_signals[symbol]["stop_loss"].replace('$', '').replace(',', ''))
+                    signal_type = active_signals[symbol]["type"]
+                    
+                    # Sadece ilk kez mesaj yazdır
+                    attr_name2 = f'_first_control_values_{symbol}'
+                    if not hasattr(signal_processing_loop, attr_name2):
+                        print(f"   📊 {symbol} kontrol değerleri:")
+                        print(f"      Giriş: ${entry_price:.6f}")
+                        print(f"      Hedef: ${target_price:.6f}")
+                        print(f"      Stop: ${stop_loss:.6f}")
+                        print(f"      Güncel: ${last_price:.6f}")
+                        print(f"      Güncel: ${last_price:.6f}")
+                        print(f"      Sinyal: {signal_type}")
+                        setattr(signal_processing_loop, attr_name2, False)
+                    
+                    # ALIŞ sinyali için hedef/stop kontrolü
+                    if signal_type == "ALIŞ":
+                        # Sadece ilk kez mesaj yazdır
+                        attr_name3 = f'_first_alish_check_{symbol}'
+                        if not hasattr(signal_processing_loop, attr_name3):
+                            print(f"   🔍 {symbol} ALIŞ sinyali kontrol ediliyor...")
+                            setattr(signal_processing_loop, attr_name3, False)
+                        
+                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                        if last_price >= target_price:
+                            # HEDEF OLDU! 🎯
+                            profit_percentage = ((target_price - entry_price) / entry_price) * 100
+                            profit_usd = 100 * profit_percentage / 100  # 100$ yatırım için
+                            
+                            print(f"🎯 HEDEF OLDU! {symbol} - Giriş: ${entry_price:.4f}, Hedef: ${target_price:.4f}, Çıkış: ${last_price:.4f}")
+                            print(f"💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})")
+                            
+                            # Başarılı sinyali kaydet
+                            successful_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": signal_type,
+                                "entry_price": entry_price,
+                                "target_price": target_price,
+                                "exit_price": last_price,
+                                "profit_percentage": profit_percentage,
+                                "profit_usd": profit_usd,
+                                "entry_time": active_signals[symbol]["signal_time"],
+                                "exit_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                "duration": "Hedef"
+                            }
+                            
+                            # İstatistikleri güncelle
+                            stats["successful_signals"] += 1
+                            stats["total_profit_loss"] += profit_usd
+                            
+                            # Stop cooldown'a ekle
+                            stop_cooldown[symbol] = datetime.now()
+                            
+                            # Pozisyonu ve aktif sinyali kaldır
+                            if symbol in positions:
+                                del positions[symbol]
+                            del active_signals[symbol]
+                            
+                            # Herkese hedef mesajı gönder
+                            target_message = f"🎯 HEDEF OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                            await send_signal_to_all_users(target_message)
+                            
+                        # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                        elif last_price <= stop_loss:
+                            # STOP OLDU! 🛑
+                            loss_percentage = ((entry_price - stop_loss) / entry_price) * 100
+                            loss_usd = 100 * loss_percentage / 100  # 100$ yatırım için
+                            
+                            print(f"🛑 STOP OLDU! {symbol} - Giriş: ${entry_price:.4f}, Stop: ${stop_loss:.4f}, Çıkış: ${last_price:.4f}")
+                            print(f"💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})")
+                            
+                            # Başarısız sinyali kaydet
+                            failed_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": signal_type,
+                                "entry_price": entry_price,
+                                "stop_loss": stop_loss,
+                                "exit_price": last_price,
+                                "loss_percentage": loss_percentage,
+                                "loss_usd": loss_usd,
+                                "entry_time": active_signals[symbol]["signal_time"],
+                                "exit_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                "duration": "Stop"
+                            }
+                            
+                            # İstatistikleri güncelle
+                            stats["failed_signals"] += 1
+                            stats["total_profit_loss"] -= loss_usd
+                            
+                            # Stop cooldown'a ekle
+                            stop_cooldown[symbol] = datetime.now()
+                            
+                            # Pozisyonu ve aktif sinyali kaldır
+                            if symbol in positions:
+                                del positions[symbol]
+                            del active_signals[symbol]
+                            
+                            # Sadece bot sahibine stop mesajı gönder
+                            stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                            await send_admin_message(stop_message)
+                    
+                    # SATIŞ sinyali için hedef/stop kontrolü
+                    elif signal_type == "SATIŞ":
+                        # Sadece ilk kez mesaj yazdır
+                        attr_name4 = f'_first_satish_check_{symbol}'
+                        if not hasattr(signal_processing_loop, attr_name4):
+                            print(f"   🔍 {symbol} SATIŞ sinyali kontrol ediliyor...")
+                            setattr(signal_processing_loop, attr_name4, False)
+                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                        if last_price <= target_price:
+                            # HEDEF OLDU! 🎯
+                            profit_percentage = ((entry_price - target_price) / entry_price) * 100
+                            profit_usd = 100 * profit_percentage / 100  # 100$ yatırım için
+                            
+                            print(f"🎯 HEDEF OLDU! {symbol} - Giriş: ${entry_price:.4f}, Hedef: ${target_price:.4f}, Çıkış: ${last_price:.4f}")
+                            print(f"💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})")
+                            
+                            # Başarılı sinyali kaydet
+                            successful_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": signal_type,
+                                "entry_price": entry_price,
+                                "target_price": target_price,
+                                "exit_price": last_price,
+                                "profit_percentage": profit_percentage,
+                                "profit_usd": profit_usd,
+                                "entry_time": active_signals[symbol]["signal_time"],
+                                "exit_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                "duration": "Hedef"
+                            }
+                            
+                            # İstatistikleri güncelle
+                            stats["successful_signals"] += 1
+                            stats["total_profit_loss"] += profit_usd
+                            
+                            # Stop cooldown'a ekle
+                            stop_cooldown[symbol] = datetime.now()
+                            
+                            # Pozisyonu ve aktif sinyali kaldır
+                            if symbol in positions:
+                                del positions[symbol]
+                            del active_signals[symbol]
+                            
+                            # Herkese hedef mesajı gönder
+                            target_message = f"🎯 HEDEF OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                            await send_signal_to_all_users(target_message)
+                            
+                        # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                        elif last_price >= stop_loss:
+                            # STOP OLDU! 🛑
+                            loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
+                            loss_usd = 100 * loss_percentage / 100  # 100$ yatırım için
+                            
+                            print(f"🛑 STOP OLDU! {symbol} - Giriş: ${entry_price:.4f}, Stop: ${stop_loss:.4f}, Çıkış: ${last_price:.4f}")
+                            print(f"💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})")
+                            
+                            # Başarısız sinyali kaydet
+                            failed_signals[symbol] = {
+                                "symbol": symbol,
+                                "type": signal_type,
+                                "entry_price": entry_price,
+                                "stop_loss": stop_loss,
+                                "exit_price": last_price,
+                                "loss_percentage": loss_percentage,
+                                "loss_usd": loss_usd,
+                                "entry_time": active_signals[symbol]["signal_time"],
+                                "exit_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                "duration": "Stop"
+                            }
+                            
+                            # İstatistikleri güncelle
+                            stats["failed_signals"] += 1
+                            stats["total_profit_loss"] -= loss_usd
+                            
+                            # Stop cooldown'a ekle
+                            stop_cooldown[symbol] = datetime.now()
+                            
+                            # Pozisyonu ve aktif sinyali kaldır
+                            if symbol in positions:
+                                del positions[symbol]
+                            del active_signals[symbol]
+                            
+                            # Sadece bot sahibine stop mesajı gönder
+                            stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                            await send_admin_message(stop_message)
+                    
                 except Exception as e:
                     print(f"Aktif sinyal güncelleme hatası: {symbol} - {str(e)}")
                     continue
+            
+            # Aktif sinyal kontrolü özeti
+            if active_signals:
+                print(f"✅ AKTİF SİNYAL KONTROLÜ TAMAMLANDI ({len(active_signals)} sinyal)")
+                for symbol in list(active_signals.keys()):
+                    if symbol in active_signals:
+                        current_price = active_signals[symbol].get("current_price_float", 0)
+                        entry_price = active_signals[symbol].get("entry_price_float", 0)
+                        if current_price > 0 and entry_price > 0:
+                            change_percent = ((current_price - entry_price) / entry_price) * 100
+                            print(f"   📊 {symbol}: Giriş: ${entry_price:.6f} → Güncel: ${current_price:.6f} (%{change_percent:+.2f})")
+            else:
+                print("ℹ️ Aktif sinyal kalmadı")
             
             # İstatistikleri güncelle
             stats["active_signals_count"] = len(active_signals)
@@ -2396,46 +3055,12 @@ async def signal_processing_loop():
             else:
                 print(f"   Başarı Oranı: %0.0")
             
-            # Döngü sonunda bekleme süresi (dinamik)
-            if global_pending_signals:
-                # Bekleyen sinyaller varsa, en yakın mum kapanışına kadar bekle
-                now = datetime.now()
-                min_wait_time = 900  # Maksimum 15 dakika
-                
-                for symbol in list(global_pending_signals.keys()):
-                    data = global_pending_signals.get(symbol)
-                    if not data:
-                        continue
-                    
-                    # 15m mum kapanış zamanını hesapla
-                    current_minute = now.minute
-                    if current_minute < 15:
-                        target_minute = 15
-                    elif current_minute < 30:
-                        target_minute = 30
-                    elif current_minute < 45:
-                        target_minute = 45
-                    else:
-                        target_minute = 0
-                    
-                    target_time = now.replace(minute=target_minute, second=0, microsecond=0)
-                    if target_time <= now:
-                        target_time += timedelta(minutes=15)
-                    
-                    # Kalan süreyi hesapla
-                    remaining_seconds = (target_time - now).total_seconds()
-                    if remaining_seconds > 0 and remaining_seconds < min_wait_time:
-                        min_wait_time = remaining_seconds
-                
-                # En yakın mum kapanışına kadar bekle (maksimum 15 dakika)
-                wait_seconds = min(min_wait_time, 900)
-                wait_minutes = wait_seconds / 60
-                print(f"⏰ En yakın 15m mum kapanışına {wait_minutes:.1f} dakika kaldı, bekleniyor...")
-                await asyncio.sleep(wait_seconds)
-            else:
-                # Bekleyen sinyal yoksa 15 dakika bekle
-                print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
-                await asyncio.sleep(900)  # 15 dakika
+            # Yeni sinyal aramaya devam et
+            print("🚀 Yeni sinyal aramaya devam ediliyor...")
+            
+            # Döngü sonunda bekleme süresi (sabit)
+            print("Tüm coinler kontrol edildi. 1 dakika bekleniyor...")
+            await asyncio.sleep(60)  # 1 dakika
             
             # Aktif sinyalleri dosyaya kaydet
             with open('active_signals.json', 'w', encoding='utf-8') as f:
@@ -2447,7 +3072,7 @@ async def signal_processing_loop():
             
         except Exception as e:
             print(f"Genel hata: {e}")
-            await asyncio.sleep(900)  # 15 dakika
+            await asyncio.sleep(60)  # 1 dakika (çok daha hızlı)
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle
@@ -2546,10 +3171,17 @@ async def clear_all_command(update, context):
     try:
         # 1) Pozisyonlar
         pos_deleted = clear_position_data_from_db()
-        # Aktif sinyaller
+        
+        # 2) Aktif sinyaller - MongoDB'den tamamen sil
+        active_deleted = clear_data_by_pattern("^active_signal_", "aktif sinyal")
         save_active_signals_to_db({})
         global global_active_signals
         global_active_signals = {}
+        
+        # 3) Stop cooldown verileri - MongoDB'den tamamen sil
+        cooldown_deleted = clear_data_by_pattern("^stop_cooldown_", "stop cooldown")
+        
+        # 4) JSON dosyasını da temizle
         try:
             with open('active_signals.json', 'w', encoding='utf-8') as f:
                 json.dump({
@@ -2564,8 +3196,7 @@ async def clear_all_command(update, context):
         prev_deleted, init_deleted = clear_previous_signals_from_db()
         
         # 3) Bekleyen kuyruklar/bellek durumları
-        global global_pending_signals, global_waiting_signals
-        global_pending_signals = {}
+        global global_waiting_signals
         try:
             global_waiting_signals = {}
         except NameError:
@@ -2592,6 +3223,8 @@ async def clear_all_command(update, context):
         summary = (
             f"✅ Temizleme tamamlandı.\n"
             f"• Pozisyon: {pos_deleted} silindi\n"
+            f"• Aktif sinyal: {active_deleted} silindi\n"
+            f"• Stop cooldown: {cooldown_deleted} silindi\n"
             f"• Önceki sinyal: {prev_deleted} silindi (initialized: {'silindi' if init_deleted else 'yok'})\n"
             f"• Bekleyen kuyruklar sıfırlandı\n"
             f"• İstatistikler sıfırlandı"
@@ -2624,7 +3257,6 @@ async def calculate_signals_for_symbol(symbol, timeframes, tf_names):
                     signal = 1
                 else:
                     signal = -1
-            
             current_signals[tf_name] = signal
             
         except Exception as e:
@@ -2638,11 +3270,17 @@ def calculate_signal_counts(signals, tf_names):
     signal_values = [signals.get(tf, 0) for tf in tf_names]
     buy_count = sum(1 for s in signal_values if s == 1)
     sell_count = sum(1 for s in signal_values if s == -1)
+    
+    print(f"🔍 Sinyal sayımı: {tf_names}")
+    print(f"   Sinyal değerleri: {signal_values}")
+    print(f"   ALIŞ sayısı: {buy_count}, SATIŞ sayısı: {sell_count}")
     return buy_count, sell_count
 
 def check_7_7_rule(buy_count, sell_count):
     """7/7 kuralını kontrol eder - tüm 7 zaman dilimi aynı yönde olmalı"""
-    return buy_count == 7 or sell_count == 7
+    result = buy_count == 7 or sell_count == 7
+    print(f"🔍 7/7 kural kontrolü: ALIŞ={buy_count}, SATIŞ={sell_count} → Sonuç: {result}")
+    return result
 
 def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜM SİNYALLER İÇİN
     """Cooldown kontrolü yapar - tüm sinyaller için 4 saat"""
@@ -2652,9 +3290,12 @@ def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜ
             last_time = datetime.fromisoformat(last_time)
         time_diff = (datetime.now() - last_time).total_seconds() / 3600
         if time_diff < hours:
+            remaining_hours = hours - time_diff
+            print(f"⏰ {symbol} → Cooldown aktif: {remaining_hours:.1f} saat kaldı")
             return True  # Cooldown aktif
         else:
             del cooldown_dict[symbol]  # Cooldown doldu
+            print(f"✅ {symbol} → Cooldown süresi doldu, yeni sinyal aranabilir")
     return False  # Cooldown yok
 
 # === Genel DB Temizleme Yardımcı Fonksiyonları ===
@@ -2739,111 +3380,7 @@ def safe_mongodb_operation(operation_func, error_message="MongoDB işlemi", defa
         return default_return
 
 # === Genel Sinyal Hesaplama Yardımcı Fonksiyonları ===
-async def check_general_confirmations(pending_dict, positions, active_signals, stats):
-    
-    if not pending_dict:
-        return
-    
-    now = datetime.now()
-    
-    for symbol in list(pending_dict.keys()):
-        data = pending_dict.get(symbol)
-        if not data:
-            continue
-        try:
-            # 15m mum kapanış zamanını hesapla
-            current_minute = now.minute
-            
-            # Şu anki 15dk periyodun bitiş zamanını hesapla
-            if current_minute < 15:
-                target_minute = 15
-            elif current_minute < 30:
-                target_minute = 30
-            elif current_minute < 45:
-                target_minute = 45
-            else:
-                target_minute = 0
-            
-            # Hedef zamana kadar beklenecek süreyi hesapla
-            target_time = now.replace(minute=target_minute, second=0, microsecond=0)
-            
-            # Eğer hedef zaman geçmişse, bir sonraki 15dk periyoda geç
-            if target_time <= now:
-                target_time += timedelta(minutes=15)
-            
-            # Henüz 15dk mum kapanmadıysa bekle
-            if now < target_time:
-                # Kalan süreyi göster (her çağrıda güncel)
-                remaining_minutes = (target_time - now).total_seconds() / 60
-                print(f"⏳ {symbol} 15m mum kapanışı bekleniyor: {remaining_minutes:.1f} dakika kaldı")
-                continue  # Henüz erken, bekle
-            
-            # 15dk mum kapandı, şimdi kontrol et
-            print(f"🔍 {symbol} 15m mum kapanışı kontrol ediliyor...")
-            
-            df15 = await async_get_historical_data(symbol, '15m', 2)
-            if df15 is None or df15.empty or len(df15) < 2:
-                print(f"❌ {symbol} 15m veri alınamadı, sinyal iptal edildi")
-                del pending_dict[symbol]
-                continue
-            
-            last_open = float(df15['open'].iloc[-1])
-            last_close = float(df15['close'].iloc[-1])
-            is_green = last_close > last_open
-            desired = data.get('desired_color')
-            ok = (desired == 'green' and is_green) or (desired == 'red' and not is_green)
-            
-            if ok:
-                # Onay anındaki güncel fiyatı al
-                current_price = float(df15['close'].iloc[-1])
-                
-                # Güncel fiyattan hedef ve stop hesapla
-                message, _, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_55(
-                    data['symbol'], current_price, data['signals'], data['volume_usd'], 3.0, 2.0
-                )
-
-                if message:
-                    position = {
-                        "type": data['signal_type'],
-                        "target": target_price,
-                        "stop": stop_loss,
-                        "open_price": current_price,  # Onay anındaki fiyat
-                        "stop_str": stop_loss_str,
-                        "signals": data['signals'],
-                        "leverage": leverage,
-                        "entry_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
-                        "entry_timestamp": datetime.now()
-                    }
-                    positions[data['symbol']] = position
-                    save_positions_to_db(positions)
-                    active_signals[data['symbol']] = {
-                        "symbol": data['symbol'],
-                        "type": data['signal_type'],
-                        "entry_price": format_price(current_price, current_price),  # Onay anındaki fiyat
-                        "entry_price_float": current_price,  # Onay anındaki fiyat
-                        "target_price": format_price(target_price, current_price),  # Onay anındaki fiyattan hesaplanan hedef
-                        "stop_loss": format_price(stop_loss, current_price),  # Onay anındaki fiyattan hesaplanan stop
-                        "signals": data['signals'],
-                        "leverage": leverage,
-                        "signal_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
-                        "current_price": format_price(current_price, current_price),  # Onay anındaki fiyat
-                        "current_price_float": current_price,  # Onay anındaki fiyat
-                        "last_update": str(datetime.now())
-                    }
-                    save_active_signals_to_db(active_signals)
-                    stats["total_signals"] += 1
-                    stats["active_signals_count"] = len(active_signals)
-                    save_stats_to_db(stats)
-                    await send_signal_to_all_users(message)
-                    print(f"✅ {data['symbol']} {data['signal_type']} 7/7 sinyali 15m kapanış onayı ile gönderildi (giriş: {current_price:.6f})")
-                del pending_dict[symbol]
-            else:
-                print(f"❌ {symbol} 15m kapanış onayı sağlanmadı, sinyal iptal edildi")
-                del pending_dict[symbol]
-        except Exception as e:
-            print(f"⚠️ {symbol} genel onay kontrol hatası: {e}")
-            # Hata durumunda sinyali iptal et
-            del pending_dict[symbol]
+# 15m onay sistemi kaldırıldı
 
 def select_all_signals(potential_signals):
     """Tüm 7/7 sinyalleri seçer ve işler."""
@@ -2854,6 +3391,32 @@ def select_all_signals(potential_signals):
     all_signals = sorted(potential_signals, key=lambda x: x['volume_usd'], reverse=True)
     print(f"✅ {len(all_signals)} 7/7 sinyal seçildi")
     return all_signals
+
+def save_stop_cooldown_to_db(stop_cooldown):
+    """Stop cooldown verilerini MongoDB'ye kaydet"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, stop cooldown kaydedilemedi")
+                return False
+        
+        # Önce tüm stop cooldown verilerini sil
+        mongo_collection.delete_many({"_id": {"$regex": "^stop_cooldown_"}})
+        
+        # Yeni stop cooldown verilerini ekle
+        for symbol, timestamp in stop_cooldown.items():
+            doc_id = f"stop_cooldown_{symbol}"
+            mongo_collection.insert_one({
+                "_id": doc_id,
+                "data": timestamp,
+                "timestamp": datetime.now()
+            })
+        
+        print(f"✅ {len(stop_cooldown)} stop cooldown MongoDB'ye kaydedildi")
+        return True
+    except Exception as e:
+        print(f"❌ Stop cooldown MongoDB'ye kaydedilirken hata: {e}")
+        return False
 
 if __name__ == "__main__":
     asyncio.run(main())

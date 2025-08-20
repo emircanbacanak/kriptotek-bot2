@@ -580,6 +580,8 @@ global_waiting_previous_signals = {}  # Bekleme listesindeki sinyallerin önceki
 # 7/7 özel sinyal sistemi için global değişkenler
 global_successful_signals = {}
 global_failed_signals = {}
+global_positions = {}  # Aktif pozisyonlar
+global_stop_cooldown = {}  # Stop cooldown listesi
 # global_changed_symbols artık kullanılmıyor
 global_allowed_users = set()  # İzin verilen kullanıcılar
 global_admin_users = set()  # Admin kullanıcılar
@@ -3190,11 +3192,13 @@ async def signal_processing_loop():
             stats["tracked_coins_count"] = len(tracked_coins)
             
             # Global değişkenleri güncelle (bot komutları için)
-            global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_allowed_users, global_admin_users
+            global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_allowed_users, global_admin_users, global_positions, global_stop_cooldown
             global_stats = stats.copy()
             global_active_signals = active_signals.copy()
             global_successful_signals = successful_signals.copy()
             global_failed_signals = failed_signals.copy()
+            global_positions = positions.copy()
+            global_stop_cooldown = stop_cooldown.copy()
             global_allowed_users = ALLOWED_USERS.copy()
             global_admin_users = ADMIN_USERS.copy()
             
@@ -3228,19 +3232,33 @@ async def signal_processing_loop():
             # Yeni sinyal aramaya devam et
             print("🚀 Yeni sinyal aramaya devam ediliyor...")
             
-            # Aktif sinyalleri hızlı kontrol et (her 10 saniyede bir)
-            for _ in range(6):  # 6 kez 10 saniye = 1 dakika
-                if active_signals:
-                    print(f"🔍 Aktif sinyaller hızlı kontrol ediliyor ({len(active_signals)} sinyal)...")
-                    await check_active_signals_quick(active_signals, positions, stats, stop_cooldown, successful_signals, failed_signals)
-                
-                await asyncio.sleep(10)  # 10 saniye bekle
-            
-            print("Tüm coinler kontrol edildi. 1 dakika tamamlandı.")
+            # Ana döngü tamamlandı
+            print("Tüm coinler kontrol edildi. 15 dakika bekleniyor...")
+            await asyncio.sleep(900)  # 15 dakika
             
         except Exception as e:
             print(f"Genel hata: {e}")
             await asyncio.sleep(60)  # 1 dakika (çok daha hızlı)
+
+async def active_signals_monitor_loop():
+    """Aktif sinyalleri sürekli izleyen paralel döngü (hedef/stop için)"""
+    print("🚀 Aktif sinyal izleme döngüsü başlatıldı!")
+    
+    while True:
+        try:
+            # Global değişkenleri al
+            global global_active_signals, global_positions, global_stats, global_stop_cooldown, global_successful_signals, global_failed_signals
+            
+            if global_active_signals:
+                print(f"🔍 Aktif sinyaller izleniyor ({len(global_active_signals)} sinyal)...")
+                await check_active_signals_quick(global_active_signals, global_positions, global_stats, global_stop_cooldown, global_successful_signals, global_failed_signals)
+            
+            # Her 30 saniyede bir kontrol et
+            await asyncio.sleep(30)
+            
+        except Exception as e:
+            print(f"❌ Aktif sinyal izleme hatası: {e}")
+            await asyncio.sleep(30)  # Hata durumunda da 30 saniye bekle
 
 async def main():
     # İzin verilen kullanıcıları ve admin gruplarını yükle
@@ -3267,23 +3285,30 @@ async def main():
     except Exception as e:
         print(f"Bot polling hatası: {e}")
     
-    # Sinyal işleme döngüsünü başlat
+    # Ana sinyal işleme döngüsünü başlat
     signal_task = asyncio.create_task(signal_processing_loop())
     
+    # Aktif sinyal izleme döngüsünü paralel olarak başlat
+    monitor_task = asyncio.create_task(active_signals_monitor_loop())
+    
     try:
-        await signal_task
+        # Her iki task'ı da bekle
+        await asyncio.gather(signal_task, monitor_task)
     except KeyboardInterrupt:
         print("\n⚠️ Bot kapatılıyor...")
     except asyncio.CancelledError:
         print("\nℹ️ Bot task'ları iptal edildi (normal kapatma)")
     finally:
-        # Sinyal task'ını iptal et
+        # Task'ları iptal et
         if not signal_task.done():
             signal_task.cancel()
-            try:
-                await signal_task
-            except asyncio.CancelledError:
-                print("ℹ️ Sinyal task'ı iptal edildi")
+        if not monitor_task.done():
+            monitor_task.cancel()
+        
+        try:
+            await asyncio.gather(signal_task, monitor_task, return_exceptions=True)
+        except Exception:
+            pass
         
         # Bot polling'i durdur
         try:

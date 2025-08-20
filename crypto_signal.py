@@ -705,13 +705,12 @@ async def send_signal_to_all_users(message):
 
 async def send_admin_message(message):
     """Bot sahibine özel mesaj gönder (sadece stop durumları için)"""
-    # Bot sahibine mesaj gönder (sadece admin gruplara)
-    for group_id in ADMIN_USERS:
-        try:
-            await send_telegram_message(message, group_id)
-            print(f"✅ Admin'e mesaj gönderildi: {group_id}")
-        except Exception as e:
-            print(f"❌ Admin'e mesaj gönderilemedi ({group_id}): {e}")
+    # Sadece bot sahibine mesaj gönder
+    try:
+        await send_telegram_message(message, BOT_OWNER_ID)
+        print(f"✅ Bot sahibine stop mesajı gönderildi: {BOT_OWNER_ID}")
+    except Exception as e:
+        print(f"❌ Bot sahibine stop mesajı gönderilemedi: {e}")
 
 # start_command fonksiyonunu kaldır
 
@@ -2421,7 +2420,7 @@ async def signal_processing_loop():
                     # Sadece ilk kez mesaj yazdır
                     attr_name5 = f'_first_price_check_{symbol}'
                     if not hasattr(signal_processing_loop, attr_name5):
-                        print(f"🔍 {symbol} fiyat kontrolü: Güncel: {last_price:.6f}")
+                        print(f"🔍 {symbol} fiyat kontrolü: Güncel: {last_price:.6f}, Stop: {pos['stop']:.6f}, Hedef: {pos['target']:.6f}")
                         setattr(signal_processing_loop, attr_name5, False)
                     
                     # Hedef/stop kontrollerine bak
@@ -2463,30 +2462,17 @@ async def signal_processing_loop():
                             if symbol in active_signals:
                                 del active_signals[symbol]
                             
-                            # ✅ İSTATİSTİKLERİ MONGODB'YE KAYDET
-                            save_stats_to_db(stats)
-                            
-                            # ✅ AKTİF SİNYALLERİ MONGODB'YE KAYDET
-                            save_active_signals_to_db(active_signals)
-                            
                             # Pozisyonu veritabanından kaldır
                             remove_position_from_db(symbol)
                             del positions[symbol]
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi?
                         elif last_price <= pos["stop"]:
                             print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
-                            # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
-                            # Yalnızca bot sahibine STOP bilgisi gönder
-                            try:
-                                stop_msg = (
-                                    f"🛑 STOP\n"
-                                    f"<b>{symbol}</b> işlemi stop oldu.\n"
-                                    f"Çıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                                    f"Stop: <b>{format_price(pos['stop'], pos['open_price'])}</b>"
-                                )
-                                await send_telegram_message(stop_msg, BOT_OWNER_ID)
-                            except Exception as _e:
-                                pass
+                            print(f"   📊 Stop Detayı: Giriş: ${pos['open_price']:.6f}, Stop: ${pos['stop']:.6f}, Güncel: ${last_price:.6f}")
+                            
+                            # Bot sahibine stop mesajı gönder
+                            stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{((pos['open_price'] - pos['stop']) / pos['open_price'] * 100):.2f}\n📈 Giriş: ${pos['open_price']:.6f}\n🛑 Stop: ${pos['stop']:.6f}\n💵 Çıkış: ${last_price:.6f}"
+                            await send_admin_message(stop_message)
                              
                             # 4 saat cooldown başlat (stop sonrası)
                             stop_cooldown[symbol] = datetime.now()
@@ -2520,12 +2506,6 @@ async def signal_processing_loop():
                             
                             if symbol in active_signals:
                                 del active_signals[symbol]
-                            
-                            # ✅ İSTATİSTİKLERİ MONGODB'YE KAYDET
-                            save_stats_to_db(stats)
-                            
-                            # ✅ AKTİF SİNYALLERİ MONGODB'YE KAYDET
-                            save_active_signals_to_db(active_signals)
                             
                             # Pozisyonu veritabanından kaldır
                             remove_position_from_db(symbol)
@@ -2573,18 +2553,11 @@ async def signal_processing_loop():
                             # Stop kontrolü: Güncel fiyat stop'u geçti mi?
                             elif last_price >= pos["stop"]:
                                 print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
-                                # Stop mesajı gönderilmiyor - sadece hedef mesajları gönderiliyor
-                                # Yalnızca bot sahibine STOP bilgisi gönder
-                                try:
-                                    stop_msg = (
-                                        f"🛑 STOP\n"
-                                        f"<b>{symbol}</b> işlemi stop oldu.\n"
-                                        f"Çıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                                        f"Stop: <b>{format_price(pos['stop'], pos['open_price'])}</b>"
-                                    )
-                                    await send_telegram_message(stop_msg, BOT_OWNER_ID)
-                                except Exception as _e:
-                                    pass
+                                print(f"   📊 Stop Detayı: Giriş: ${pos['open_price']:.6f}, Stop: ${pos['stop']:.6f}, Güncel: ${last_price:.6f}")
+                                
+                                # Bot sahibine stop mesajı gönder
+                                stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{((pos['stop'] - pos['open_price']) / pos['open_price'] * 100):.2f}\n📈 Giriş: ${pos['open_price']:.6f}\n🛑 Stop: ${pos['stop']:.6f}\n💵 Çıkış: ${last_price:.6f}"
+                                await send_admin_message(stop_message)
                                  
                                 # 4 saat cooldown başlat (stop sonrası)
                                 stop_cooldown[symbol] = datetime.now()

@@ -3470,6 +3470,10 @@ async def monitor_signals():
                             # SATIŞ: fiyat düşerse kar (+), yükselirse zarar (-)
                             change_percent = ((entry_price - current_price) / entry_price) * 100
                         
+                        # Debug: hesaplama detaylarını göster
+                        print(f"🔍 {symbol} Debug: Giriş=${entry_price:.6f}, Güncel=${current_price:.6f}, Tip={signal_type}")
+                        print(f"   Hesaplama: change_percent = {change_percent:.6f}%")
+                        
                         # 10x kaldıraç ile 100$ yatırım kar/zarar hesapla
                         investment_amount = 100  # 100$ yatırım
                         leverage = 10  # 10x kaldıraç
@@ -3596,12 +3600,89 @@ async def monitor_signals():
                             global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
                             save_stats_to_db(global_stats)
                     else:
-                        # Tetikleme yoksa, sadece anlık fiyatı güncelle
+                        # Tetikleme yoksa, anlık fiyatı güncelle ve ekstra stop/hedef kontrolü yap
                         if final_price:
                             signal['current_price'] = f"{final_price:.6f}"
                             signal['current_price_float'] = final_price
                             
+                            # Ekstra agresif stop/hedef kontrolü
                             entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
+                            target_price = float(str(signal.get('target_price', 0)).replace('$', '').replace(',', ''))
+                            stop_price = float(str(signal.get('stop_loss', 0)).replace('$', '').replace(',', ''))
+                            signal_type = signal.get('type', 'ALIŞ')
+                            
+                            if entry_price > 0 and target_price > 0 and stop_price > 0:
+                                # Anlık stop/hedef kontrolü
+                                if signal_type == "ALIŞ":
+                                    if final_price >= target_price:
+                                        print(f"🎯 {symbol} - ANLIK TP tetiklendi! Güncel: ${final_price:.6f} >= Hedef: ${target_price:.6f}")
+                                        is_triggered = True
+                                        trigger_type = "take_profit"
+                                        final_price = target_price
+                                    elif final_price <= stop_price:
+                                        print(f"🛑 {symbol} - ANLIK SL tetiklendi! Güncel: ${final_price:.6f} <= Stop: ${stop_price:.6f}")
+                                        is_triggered = True
+                                        trigger_type = "stop_loss"
+                                        final_price = stop_price
+                                else:  # SATIŞ
+                                    if final_price <= target_price:
+                                        print(f"🎯 {symbol} - ANLIK TP tetiklendi! Güncel: ${final_price:.6f} <= Hedef: ${target_price:.6f}")
+                                        is_triggered = True
+                                        trigger_type = "take_profit"
+                                        final_price = target_price
+                                    elif final_price >= stop_price:
+                                        print(f"🛑 {symbol} - ANLIK SL tetiklendi! Güncel: ${final_price:.6f} >= Stop: ${stop_price:.6f}")
+                                        is_triggered = True
+                                        trigger_type = "stop_loss"
+                                        final_price = stop_price
+                                
+                                # Eğer anlık tetikleme varsa, hemen işle
+                                if is_triggered:
+                                    if trigger_type == "take_profit":
+                                        # Hedefe ulaşıldı, herkese mesaj gönder
+                                        signal['current_price_float'] = final_price
+                                        await handle_take_profit(symbol, signal)
+                                        
+                                        # Pozisyonu ve aktif sinyali kaldır
+                                        if symbol in global_positions:
+                                            del global_positions[symbol]
+                                        del active_signals[symbol]
+                                        
+                                        # Cooldown'a ekle
+                                        global_stop_cooldown[symbol] = datetime.now()
+                                        save_stop_cooldown_to_db(global_stop_cooldown)
+                                        
+                                        # İstatistikleri güncelle
+                                        global_stats["successful_signals"] += 1
+                                        global_stats["total_profit_loss"] += 100 * 0.02  # %2 kar
+                                        save_stats_to_db(global_stats)
+                                        
+                                        print(f"✅ {symbol} - ANLIK TP işlemi tamamlandı!")
+                                        continue  # Bu sinyali atla, sonrakine geç
+                                        
+                                    elif trigger_type == "stop_loss":
+                                        # Stop-loss oldu, sadece admin'e mesaj gönder
+                                        signal['current_price_float'] = final_price
+                                        await handle_stop_loss(symbol, signal)
+                                        
+                                        # Pozisyonu ve aktif sinyali kaldır
+                                        if symbol in global_positions:
+                                            del global_positions[symbol]
+                                        del active_signals[symbol]
+                                        
+                                        # Cooldown'a ekle
+                                        global_stop_cooldown[symbol] = datetime.now()
+                                        save_stop_cooldown_to_db(global_stop_cooldown)
+                                        
+                                        # İstatistikleri güncelle
+                                        global_stats["failed_signals"] += 1
+                                        global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
+                                        save_stats_to_db(global_stats)
+                                        
+                                        print(f"🛑 {symbol} - ANLIK SL işlemi tamamlandı!")
+                                        continue  # Bu sinyali atla, sonrakine geç
+                            
+                            # Normal kar/zarar hesaplaması
                             if entry_price > 0:
                                 # Kâr/Zarar Yüzdesini Hesapla ve Güncelle
                                 change_percent = ((final_price - entry_price) / entry_price) * 100
@@ -3620,8 +3701,8 @@ async def monitor_signals():
             global global_active_signals
             global_active_signals = active_signals.copy()
             
-            # API çağrı limitlerini aşmamak için bekleme süresi
-            await asyncio.sleep(5)
+            # API çağrı limitlerini aşmamak için bekleme süresi - daha hızlı stop/hedef kontrolü için
+            await asyncio.sleep(1)
         
         except Exception as e:
             print(f"❌ Ana sinyal izleme döngüsü hatası: {e}")

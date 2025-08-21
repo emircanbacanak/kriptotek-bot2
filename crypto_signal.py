@@ -3478,11 +3478,25 @@ async def monitor_signals():
                         
                         # Hedefe ne kadar kaldığını hesapla
                         if signal_type == "ALIŞ":
+                            # ALIŞ: hedef fiyat > güncel fiyat ise pozitif (hedefe yaklaşıyor)
                             target_distance = ((target_price - current_price) / current_price) * 100
                             stop_distance = ((current_price - stop_price) / current_price) * 100
                         else:
+                            # SATIŞ: hedef fiyat < güncel fiyat ise pozitif (hedefe yaklaşıyor)
                             target_distance = ((current_price - target_price) / current_price) * 100
                             stop_distance = ((current_price - stop_price) / current_price) * 100
+                        
+                        # Hedef mesafesi negatifse, hedefe ulaşılmış demektir
+                        if target_distance < 0:
+                            target_status = "✅ HEDEFE ULAŞILDI!"
+                        else:
+                            target_status = f"📈 Hedefe: {target_distance:.2f}%"
+                        
+                        # Stop mesafesi negatifse, stop tetiklendi demektir
+                        if stop_distance < 0:
+                            stop_status = "🛑 STOP TETİKLENDİ!"
+                        else:
+                            stop_status = f"🛑 Stop'a: {stop_distance:.2f}%"
                         
                         # Durum ikonu - doğru mantık
                         if signal_type == "ALIŞ":
@@ -3503,7 +3517,7 @@ async def monitor_signals():
                                 status_icon = "⚪"  # Başabaş
                         
                         print(f"   {status_icon} {symbol} ({signal_type}): Giriş: ${entry_price:.6f} → Güncel: ${current_price:.6f} ({change_percent:+.2f}%)")
-                        print(f"      💰 10x Kaldıraç: ${profit_loss_usd:+.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
+                        print(f"      💰 10x Kaldıraç: ${profit_loss_usd:+.2f} | {target_status} | {stop_status}")
                 except:
                     print(f"   ⚪ {symbol}: Durum hesaplanamadı")
             

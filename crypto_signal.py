@@ -167,7 +167,7 @@ def check_klines_for_trigger(signal, klines):
                 if high >= target_price:
                     print(f"✅ {symbol} - TP tetiklendi! Mum: High={high:.6f}, TP={target_price:.6f}")
                     return True, "take_profit", target_price
-                # Sonra stop-loss kontrolü
+                # Sonra stop-loss kontrolü - eşit veya geçmişse
                 if low <= stop_loss_price:
                     print(f"❌ {symbol} - SL tetiklendi! Mum: Low={low:.6f}, SL={stop_loss_price:.6f}")
                     return True, "stop_loss", stop_loss_price
@@ -178,7 +178,7 @@ def check_klines_for_trigger(signal, klines):
                 if low <= target_price:
                     print(f"✅ {symbol} - TP tetiklendi! Mum: Low={low:.6f}, TP={target_price:.6f}")
                     return True, "take_profit", target_price
-                # Sonra stop-loss kontrolü
+                # Sonra stop-loss kontrolü - eşit veya geçmişse
                 if high >= stop_loss_price:
                     print(f"❌ {symbol} - SL tetiklendi! Mum: High={high:.6f}, SL={stop_loss_price:.6f}")
                     return True, "stop_loss", stop_loss_price
@@ -3473,10 +3473,8 @@ async def monitor_signals():
                         leverage = 10  # 10x kaldıraç
                         actual_investment = investment_amount * leverage  # 1000$ efektif yatırım
                         
-                        if change_percent > 0:
-                            profit_loss_usd = (actual_investment * change_percent) / 100
-                        else:
-                            profit_loss_usd = (actual_investment * abs(change_percent)) / 100
+                        # Kar/zarar USD hesaplama - doğru mantık
+                        profit_loss_usd = (actual_investment * change_percent) / 100
                         
                         # Hedefe ne kadar kaldığını hesapla
                         if signal_type == "ALIŞ":
@@ -3484,25 +3482,25 @@ async def monitor_signals():
                             stop_distance = ((current_price - stop_price) / current_price) * 100
                         else:
                             target_distance = ((current_price - target_price) / current_price) * 100
-                            stop_distance = ((stop_price - current_price) / current_price) * 100
+                            stop_distance = ((current_price - stop_price) / current_price) * 100
                         
-                        # Durum ikonu - SATIŞ sinyallerinde mantık tersine
+                        # Durum ikonu - doğru mantık
                         if signal_type == "ALIŞ":
                             # ALIŞ sinyali: fiyat yükselirse yeşil (kar), düşerse kırmızı (zarar)
                             if change_percent > 0:
-                                status_icon = "🟢"
+                                status_icon = "🟢"  # Karda
                             elif change_percent < 0:
-                                status_icon = "🔴"
+                                status_icon = "🔴"  # Zararda
                             else:
-                                status_icon = "⚪"
+                                status_icon = "⚪"  # Başabaş
                         else:
                             # SATIŞ sinyali: fiyat düşerse yeşil (kar), yükselirse kırmızı (zarar)
                             if change_percent > 0:
-                                status_icon = "🟢"
+                                status_icon = "🟢"  # Karda
                             elif change_percent < 0:
-                                status_icon = "🔴"
+                                status_icon = "🔴"  # Zararda
                             else:
-                                status_icon = "⚪"
+                                status_icon = "⚪"  # Başabaş
                         
                         print(f"   {status_icon} {symbol} ({signal_type}): Giriş: ${entry_price:.6f} → Güncel: ${current_price:.6f} ({change_percent:+.2f}%)")
                         print(f"      💰 10x Kaldıraç: ${profit_loss_usd:+.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
@@ -3533,6 +3531,28 @@ async def monitor_signals():
 
                     # Mum verilerini kontrol et
                     is_triggered, trigger_type, final_price = check_klines_for_trigger(signal, klines)
+                    
+                    # Manuel stop kontrolü de ekle (güvenlik için)
+                    if not is_triggered and klines:
+                        current_price = float(klines[-1][4])  # Son mumun kapanış fiyatı
+                        entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
+                        stop_price = float(str(signal.get('stop_loss', 0)).replace('$', '').replace(',', ''))
+                        signal_type = signal.get('type', 'ALIŞ')
+                        
+                        print(f"🔍 {symbol} Manuel Stop Kontrolü:")
+                        print(f"   Tip: {signal_type} | Giriş: ${entry_price:.6f} | Güncel: ${current_price:.6f} | Stop: ${stop_price:.6f}")
+                        
+                        # Manuel stop kontrolü - eşit veya geçmişse tetikle
+                        if signal_type == "ALIŞ" and current_price <= stop_price:
+                            print(f"🛑 {symbol} - Manuel SL tetiklendi! Güncel: ${current_price:.6f} <= Stop: ${stop_price:.6f}")
+                            is_triggered = True
+                            trigger_type = "stop_loss"
+                            final_price = current_price
+                        elif signal_type == "SATIŞ" and current_price >= stop_price:
+                            print(f"🛑 {symbol} - Manuel SL tetiklendi! Güncel: ${current_price:.6f} >= Stop: ${stop_price:.6f}")
+                            is_triggered = True
+                            trigger_type = "stop_loss"
+                            final_price = current_price
                     
                     if is_triggered:
                         # Tetikleme türüne göre işlemi yap

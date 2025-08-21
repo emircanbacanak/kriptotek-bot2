@@ -2184,7 +2184,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
             
             # ALIŞ sinyali için hedef/stop kontrolü
             if signal_type == "ALIŞ":
-                # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (ALIŞ: yukarı çıkması gerekir)
                 if close_price >= target_price:
                     print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
                     
@@ -2209,7 +2209,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
                     await send_signal_to_all_users(target_message)
                     
-                # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                # Stop kontrolü: Güncel fiyat stop'u geçti mi? (ALIŞ: aşağı düşmesi zarar)
                 elif close_price <= stop_loss:
                     print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
                     
@@ -2236,7 +2236,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
             
             # SATIŞ sinyali için hedef/stop kontrolü
             elif signal_type == "SATIŞ":
-                # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (SATIŞ: aşağı düşmesi gerekir)
                 if close_price <= target_price:
                     print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
                     
@@ -2261,7 +2261,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
                     await send_signal_to_all_users(target_message)
                     
-                # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
                 elif close_price >= stop_loss:
                     print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
                     
@@ -2335,6 +2335,33 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
             active_signals[symbol]["current_price_float"] = last_price
             active_signals[symbol]["last_update"] = str(datetime.now())
             
+            # Kar/Zarar durumunu hesapla ve göster
+            entry_price = active_signals[symbol]["entry_price_float"]
+            if signal_type == "ALIŞ":
+                # ALIŞ sinyali: Fiyat yükselirse kar, düşerse zarar
+                if last_price > entry_price:
+                    profit_percentage = ((last_price - entry_price) / entry_price) * 100
+                    profit_usd = 100 * profit_percentage / 100
+                    print(f"🟢 {symbol} (ALIS): Giriş: ${entry_price:.6f} → Güncel: ${last_price:.6f} (+{profit_percentage:.2f}%)")
+                    print(f"   💰 10x Kaldıraç: ${profit_usd:.2f} | 📈 Hedefe: {((target_price - last_price) / last_price * 100):.2f}% | 🛑 Stop'a: {((last_price - stop_loss) / last_price * 100):.2f}%")
+                else:
+                    loss_percentage = ((entry_price - last_price) / entry_price) * 100
+                    loss_usd = 100 * loss_percentage / 100
+                    print(f"🔴 {symbol} (ALIS): Giriş: ${entry_price:.6f} → Güncel: ${last_price:.6f} (-{loss_percentage:.2f}%)")
+                    print(f"   💸 10x Kaldıraç: ${loss_usd:.2f} | 📈 Hedefe: {((target_price - last_price) / last_price * 100):.2f}% | 🛑 Stop'a: {((last_price - stop_loss) / last_price * 100):.2f}%")
+            else:  # SATIŞ sinyali
+                # SATIŞ sinyali: Fiyat düşerse kar, yükselirse zarar
+                if last_price < entry_price:
+                    profit_percentage = ((entry_price - last_price) / entry_price) * 100
+                    profit_usd = 100 * profit_percentage / 100
+                    print(f"🟢 {symbol} (SATIS): Giriş: ${entry_price:.6f} → Güncel: ${last_price:.6f} (+{profit_percentage:.2f}%)")
+                    print(f"   💰 10x Kaldıraç: ${profit_usd:.2f} | 📈 Hedefe: {((entry_price - target_price) / entry_price * 100):.2f}% | 🛑 Stop'a: {((stop_loss - entry_price) / entry_price * 100):.2f}%")
+                else:
+                    loss_percentage = ((last_price - entry_price) / entry_price) * 100
+                    loss_usd = 100 * loss_percentage / 100
+                    print(f"🔴 {symbol} (SATIS): Giriş: ${entry_price:.6f} → Güncel: ${last_price:.6f} (-{loss_percentage:.2f}%)")
+                    print(f"   💸 10x Kaldıraç: ${loss_usd:.2f} | 📈 Hedefe: {((entry_price - target_price) / entry_price * 100):.2f}% | 🛑 Stop'a: {((stop_loss - entry_price) / entry_price * 100):.2f}%")
+            
             # Hedef ve stop kontrolü
             entry_price = active_signals[symbol]["entry_price_float"]
             target_price = float(active_signals[symbol]["target_price"].replace('$', '').replace(',', ''))
@@ -2343,7 +2370,7 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
             
             # ALIŞ sinyali için hedef/stop kontrolü
             if signal_type == "ALIŞ":
-                # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (ALIŞ: yukarı çıkması gerekir)
                 if last_price >= target_price:
                     # HEDEF OLDU! 🎯
                     profit_percentage = ((target_price - entry_price) / entry_price) * 100
@@ -2387,11 +2414,11 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     global_successful_signals = successful_signals.copy()
                     global_failed_signals = failed_signals.copy()
                     
-                    # Bot sahibine stop mesajı gönder
-                    stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                    await send_admin_message(stop_message)
+                    # Herkese hedef mesajı gönder
+                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                    await send_signal_to_all_users(target_message)
                     
-                # Stop kontrolü: Güncel fiyat stop'u geçti mi? (GELİŞMİŞ KONTROL)
+                # Stop kontrolü: Güncel fiyat stop'u geçti mi? (ALIŞ: aşağı düşmesi zarar)
                 elif last_price <= stop_loss:
                     # STOP OLDU! 🛑
                     loss_percentage = ((entry_price - stop_loss) / entry_price) * 100
@@ -2443,7 +2470,7 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
             
             # SATIŞ sinyali için hedef/stop kontrolü
             elif signal_type == "SATIŞ":
-                # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (SATIŞ: aşağı düşmesi gerekir)
                 if last_price <= target_price:
                     # HEDEF OLDU! 🎯
                     profit_percentage = ((entry_price - target_price) / entry_price) * 100
@@ -2486,11 +2513,11 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     global_successful_signals = successful_signals.copy()
                     global_failed_signals = failed_signals.copy()
                     
-                    # Bot sahibine stop mesajı gönder
-                    stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                    await send_admin_message(stop_message)
+                    # Herkese hedef mesajı gönder
+                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                    await send_signal_to_all_users(target_message)
                     
-                # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
                 elif last_price >= stop_loss:
                     # STOP OLDU! 🛑
                     loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
@@ -3177,7 +3204,7 @@ async def signal_processing_loop():
                             print(f"   🔍 {symbol} ALIŞ sinyali kontrol ediliyor...")
                             setattr(signal_processing_loop, attr_name3, False)
                         
-                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (ALIŞ: yukarı çıkması gerekir)
                         if last_price >= target_price:
                             # HEDEF OLDU! 🎯
                             profit_percentage = ((target_price - entry_price) / entry_price) * 100
@@ -3224,7 +3251,7 @@ async def signal_processing_loop():
                             target_message = f"🎯 HEDEF OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
                             await send_signal_to_all_users(target_message)
                             
-                        # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                        # Stop kontrolü: Güncel fiyat stop'u geçti mi? (ALIŞ: aşağı düşmesi zarar)
                         elif last_price <= stop_loss:
                             # STOP OLDU! 🛑
                             loss_percentage = ((entry_price - stop_loss) / entry_price) * 100
@@ -3270,7 +3297,7 @@ async def signal_processing_loop():
                         if not hasattr(signal_processing_loop, attr_name4):
                             print(f"   🔍 {symbol} SATIŞ sinyali kontrol ediliyor...")
                             setattr(signal_processing_loop, attr_name4, False)
-                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
+                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (SATIŞ: aşağı düşmesi gerekir)
                         if last_price <= target_price:
                             # HEDEF OLDU! 🎯
                             profit_percentage = ((entry_price - target_price) / entry_price) * 100
@@ -3314,10 +3341,10 @@ async def signal_processing_loop():
                             global_failed_signals = failed_signals.copy()
                             
                             # Herkese hedef mesajı gönder
-                            target_message = f"🎯 HEDEF OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
+                            target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
                             await send_signal_to_all_users(target_message)
                             
-                        # Stop kontrolü: Güncel fiyat stop'u geçti mi?
+                        # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
                         elif last_price >= stop_loss:
                             # STOP OLDU! 🛑
                             loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
@@ -3488,23 +3515,23 @@ async def monitor_signals():
                             target_distance = ((current_price - target_price) / current_price) * 100
                             stop_distance = ((current_price - stop_price) / current_price) * 100
                         
-                        # Durum ikonu - SATIŞ sinyallerinde mantık tersine
+                        # Durum ikonu - Doğru mantık
                         if signal_type == "ALIŞ":
                             # ALIŞ sinyali: fiyat yükselirse yeşil (kar), düşerse kırmızı (zarar)
                             if change_percent > 0:
-                                status_icon = "🟢"
+                                status_icon = "🟢"  # Kar
                             elif change_percent < 0:
-                                status_icon = "🔴"
+                                status_icon = "🔴"  # Zarar
                             else:
-                                status_icon = "⚪"
-                        else:
+                                status_icon = "⚪"  # Değişim yok
+                        else:  # SATIŞ sinyali
                             # SATIŞ sinyali: fiyat düşerse yeşil (kar), yükselirse kırmızı (zarar)
                             if change_percent > 0:
-                                status_icon = "🟢"
+                                status_icon = "🟢"  # Kar
                             elif change_percent < 0:
-                                status_icon = "🔴"
+                                status_icon = "🔴"  # Zarar
                             else:
-                                status_icon = "⚪"
+                                status_icon = "⚪"  # Değişim yok
                         
                         print(f"   {status_icon} {symbol} ({signal_type}): Giriş: ${entry_price:.6f} → Güncel: ${current_price:.6f} ({change_percent:+.2f}%)")
                         print(f"      💰 10x Kaldıraç: ${profit_loss_usd:+.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
@@ -3617,24 +3644,24 @@ async def monitor_signals():
                                         print(f"🎯 {symbol} - HEDEF! Güncel: ${final_price:.6f} >= Hedef: ${target_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "take_profit"
-                                        final_price = target_price
+                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
                                     elif final_price <= stop_price:
                                         print(f"🛑 {symbol} - STOP! Güncel: ${final_price:.6f} <= Stop: ${stop_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "stop_loss"
-                                        final_price = stop_price
+                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
                                 else:  # SATIŞ
                                     # SATIŞ: Fiyat düşerse hedef, yükselirse stop
                                     if final_price <= target_price:
                                         print(f"🎯 {symbol} - HEDEF! Güncel: ${final_price:.6f} <= Hedef: ${target_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "take_profit"
-                                        final_price = target_price
+                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
                                     elif final_price >= stop_price:
                                         print(f"🛑 {symbol} - STOP! Güncel: ${final_price:.6f} >= Stop: ${stop_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "stop_loss"
-                                        final_price = stop_price
+                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
                                 
                                 # Eğer anlık tetikleme varsa, hemen işle
                                 if is_triggered:
@@ -4100,8 +4127,10 @@ async def handle_take_profit(symbol, signal):
         # Kar hesaplaması
         signal_type = signal.get('type', 'ALIŞ')
         if signal_type == "ALIŞ":
+            # ALIŞ: Fiyat yükselirse kar
             profit_percentage = ((exit_price - entry_price) / entry_price) * 100
         else:  # SATIŞ
+            # SATIŞ: Fiyat düşerse kar
             profit_percentage = ((entry_price - exit_price) / entry_price) * 100
         
         profit_usd = 100 * profit_percentage / 100  # 100$ yatırım için
@@ -4135,8 +4164,10 @@ async def handle_stop_loss(symbol, signal):
         # Zarar hesaplaması
         signal_type = signal.get('type', 'ALIŞ')
         if signal_type == "ALIŞ":
+            # ALIŞ: Fiyat düşerse zarar
             loss_percentage = ((entry_price - exit_price) / entry_price) * 100
         else:  # SATIŞ
+            # SATIŞ: Fiyat yükselirse zarar
             loss_percentage = ((exit_price - entry_price) / entry_price) * 100
         
         loss_usd = 100 * loss_percentage / 100  # 100$ yatırım için

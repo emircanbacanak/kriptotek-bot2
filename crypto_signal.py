@@ -2397,6 +2397,10 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
             
             # Kar/Zarar durumunu hesapla ve göster
             entry_price = active_signals[symbol]["entry_price_float"]
+            target_price = float(active_signals[symbol]["target_price"].replace('$', '').replace(',', ''))
+            stop_loss = float(active_signals[symbol]["stop_loss"].replace('$', '').replace(',', ''))
+            signal_type = active_signals[symbol]["type"]
+            
             if signal_type == "ALIŞ":
                 # ALIŞ sinyali: Fiyat yükselirse kar, düşerse zarar
                 if last_price > entry_price:
@@ -2423,10 +2427,6 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     print(f"   💸 10x Kaldıraç: ${loss_usd:.2f} | 📈 Hedefe: {((entry_price - target_price) / entry_price * 100):.2f}% | 🛑 Stop'a: {((stop_loss - entry_price) / entry_price * 100):.2f}%")
             
             # Hedef ve stop kontrolü
-            entry_price = active_signals[symbol]["entry_price_float"]
-            target_price = float(active_signals[symbol]["target_price"].replace('$', '').replace(',', ''))
-            stop_loss = float(active_signals[symbol]["stop_loss"].replace('$', '').replace(',', ''))
-            signal_type = active_signals[symbol]["type"]
             
             # ALIŞ sinyali için hedef/stop kontrolü
             if signal_type == "ALIŞ":
@@ -3834,11 +3834,6 @@ async def monitor_signals():
                                         
                                         print(f"🛑 {symbol} - ANLIK SL işlemi tamamlandı!")
                                         break  # Bu sinyali atla, sonrakine geç
-                            global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
-                            save_stats_to_db(global_stats)
-                            
-                            print(f"🛑 {symbol} - ANLIK SL işlemi tamamlandı!")
-                            continue  # Bu sinyali atla, sonrakine geç
                             
                             # Normal kar/zarar hesaplaması
                             if entry_price > 0:

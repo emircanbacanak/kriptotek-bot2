@@ -2222,6 +2222,8 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
                     await send_signal_to_all_users(target_message)
                     
+                    print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
+                    
                 # Stop kontrolü: Güncel fiyat stop'u geçti mi? (ALIŞ: aşağı düşmesi zarar)
                 elif close_price <= stop_loss:
                     print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
@@ -2256,87 +2258,93 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     else:
                         print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                     
-                    # Sadece bot sahibine stop mesajı gönder
+                                        # Sadece bot sahibine stop mesajı gönder
                     stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
                     await send_admin_message(stop_message)
-            
-            # SATIŞ sinyali için hedef/stop kontrolü
-            elif signal_type == "SATIŞ":
-                # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (SATIŞ: aşağı düşmesi gerekir)
-                if close_price <= target_price:
-                    print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
                     
-                    # İstatistikleri güncelle
-                    stats["successful_signals"] += 1
-                    profit_percentage = ((entry_price - target_price) / entry_price) * 100
-                    profit_usd = 100 * profit_percentage / 100
-                    stats["total_profit_loss"] += profit_usd
+                    print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
-                    # Cooldown'a ekle (4 saat)
-                    stop_cooldown[symbol] = datetime.now()
-                    save_stop_cooldown_to_db(stop_cooldown)
-                    
-                    # Pozisyon ve aktif sinyali kaldır
-                    del positions[symbol]
-                    if symbol in active_signals:
-                        del active_signals[symbol]
-                    
-                    # Veritabanı kayıtlarını kontrol et
-                    positions_saved = save_positions_to_db(positions)
-                    active_signals_saved = save_active_signals_to_db(active_signals)
-                    
-                    if not positions_saved or not active_signals_saved:
-                        print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                        # Hata durumunda tekrar dene
-                        await asyncio.sleep(1)
+                                # SATIŞ sinyali için hedef/stop kontrolü
+                elif signal_type == "SATIŞ":
+                    # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (SATIŞ: aşağı düşmesi gerekir)
+                    if close_price <= target_price:
+                        print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                        
+                        # İstatistikleri güncelle
+                        stats["successful_signals"] += 1
+                        profit_percentage = ((entry_price - target_price) / entry_price) * 100
+                        profit_usd = 100 * profit_percentage / 100
+                        stats["total_profit_loss"] += profit_usd
+                        
+                        # Cooldown'a ekle (4 saat)
+                        stop_cooldown[symbol] = datetime.now()
+                        save_stop_cooldown_to_db(stop_cooldown)
+                        
+                        # Pozisyon ve aktif sinyali kaldır
+                        del positions[symbol]
+                        if symbol in active_signals:
+                            del active_signals[symbol]
+                        
+                        # Veritabanı kayıtlarını kontrol et
                         positions_saved = save_positions_to_db(positions)
                         active_signals_saved = save_active_signals_to_db(active_signals)
+                        
                         if not positions_saved or not active_signals_saved:
-                            print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                    else:
-                        print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                    
-                    # Herkese hedef mesajı gönder
-                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
-                    await send_signal_to_all_users(target_message)
-                    
-                # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
-                elif close_price >= stop_loss:
-                    print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
-                    
-                    # İstatistikleri güncelle
-                    stats["failed_signals"] += 1
-                    loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
-                    loss_usd = 100 * loss_percentage / 100
-                    stats["total_profit_loss"] -= loss_usd
-                    
-                    # Cooldown'a ekle (4 saat)
-                    stop_cooldown[symbol] = datetime.now()
-                    save_stop_cooldown_to_db(stop_cooldown)
-                    
-                    # Pozisyon ve aktif sinyali kaldır
-                    del positions[symbol]
-                    if symbol in active_signals:
-                        del active_signals[symbol]
-                    
-                    # Veritabanı kayıtlarını kontrol et
-                    positions_saved = save_positions_to_db(positions)
-                    active_signals_saved = save_active_signals_to_db(active_signals)
-                    
-                    if not positions_saved or not active_signals_saved:
-                        print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                        # Hata durumunda tekrar dene
-                        await asyncio.sleep(1)
+                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
+                            # Hata durumunda tekrar dene
+                            await asyncio.sleep(1)
+                            positions_saved = save_positions_to_db(positions)
+                            active_signals_saved = save_active_signals_to_db(active_signals)
+                            if not positions_saved or not active_signals_saved:
+                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
+                        else:
+                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
+                        
+                        # Herkese hedef mesajı gönder
+                        target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                        await send_signal_to_all_users(target_message)
+                        
+                        print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
+                        
+                    # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
+                    elif close_price >= stop_loss:
+                        print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                        
+                        # İstatistikleri güncelle
+                        stats["failed_signals"] += 1
+                        loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
+                        loss_usd = 100 * loss_percentage / 100
+                        stats["total_profit_loss"] -= loss_usd
+                        
+                        # Cooldown'a ekle (4 saat)
+                        stop_cooldown[symbol] = datetime.now()
+                        save_stop_cooldown_to_db(stop_cooldown)
+                        
+                        # Pozisyon ve aktif sinyali kaldır
+                        del positions[symbol]
+                        if symbol in active_signals:
+                            del active_signals[symbol]
+                        
+                        # Veritabanı kayıtlarını kontrol et
                         positions_saved = save_positions_to_db(positions)
                         active_signals_saved = save_active_signals_to_db(active_signals)
+                        
                         if not positions_saved or not active_signals_saved:
-                            print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                    else:
-                        print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                    
-                    # Sadece bot sahibine stop mesajı gönder
-                    stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
-                    await send_admin_message(stop_message)
+                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
+                            # Hata durumunda tekrar dene
+                            await asyncio.sleep(1)
+                            positions_saved = save_positions_to_db(positions)
+                            active_signals_saved = save_active_signals_to_db(active_signals)
+                            if not positions_saved or not active_signals_saved:
+                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
+                        else:
+                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
+                        
+                        # Sadece bot sahibine stop mesajı gönder
+                        stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                        await send_admin_message(stop_message)
+                        
+                        print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
         except Exception as e:
             print(f"⚠️ {symbol} pozisyon kontrolü sırasında hata: {e}")
@@ -3660,7 +3668,8 @@ async def monitor_signals():
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in global_positions:
                                 del global_positions[symbol]
-                            del active_signals[symbol]
+                            if symbol in active_signals:
+                                del active_signals[symbol]
                             
                             # Veritabanı kayıtlarını kontrol et
                             positions_saved = save_positions_to_db(global_positions)
@@ -3686,6 +3695,9 @@ async def monitor_signals():
                             global_stats["total_profit_loss"] += 100 * 0.02  # %2 kar
                             save_stats_to_db(global_stats)
                             
+                            print(f"✅ {symbol} - TP işlemi tamamlandı ve sinyal kaldırıldı!")
+                            break  # Bu sinyali atla, sonrakine geç
+                            
                         elif trigger_type == "stop_loss":
                             # Stop-loss oldu, sadece admin'e mesaj gönder
                             signal['current_price_float'] = final_price
@@ -3694,7 +3706,8 @@ async def monitor_signals():
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in global_positions:
                                 del global_positions[symbol]
-                            del active_signals[symbol]
+                            if symbol in active_signals:
+                                del active_signals[symbol]
                             
                             # Cooldown'a ekle
                             global_stop_cooldown[symbol] = datetime.now()
@@ -3704,6 +3717,9 @@ async def monitor_signals():
                             global_stats["failed_signals"] += 1
                             global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
                             save_stats_to_db(global_stats)
+                            
+                            print(f"🛑 {symbol} - SL işlemi tamamlandı!")
+                            break  # Bu sinyali atla, sonrakine geç
                     else:
                         # Tetikleme yoksa, anlık fiyatı güncelle ve ekstra stop/hedef kontrolü yap
                         if final_price:
@@ -3755,6 +3771,21 @@ async def monitor_signals():
                                             del global_positions[symbol]
                                         del active_signals[symbol]
                                         
+                                        # Veritabanı kayıtlarını kontrol et
+                                        positions_saved = save_positions_to_db(global_positions)
+                                        active_signals_saved = save_active_signals_to_db(active_signals)
+                                        
+                                        if not positions_saved or not active_signals_saved:
+                                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
+                                            # Hata durumunda tekrar dene
+                                            await asyncio.sleep(1)
+                                            positions_saved = save_positions_to_db(global_positions)
+                                            active_signals_saved = save_active_signals_to_db(active_signals)
+                                            if not positions_saved or not active_signals_saved:
+                                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
+                                        else:
+                                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
+                                        
                                         # Cooldown'a ekle
                                         global_stop_cooldown[symbol] = datetime.now()
                                         save_stop_cooldown_to_db(global_stop_cooldown)
@@ -3765,39 +3796,44 @@ async def monitor_signals():
                                         save_stats_to_db(global_stats)
                                         
                                         print(f"✅ {symbol} - ANLIK TP işlemi tamamlandı!")
-                                        continue  # Bu sinyali atla, sonrakine geç
+                                        break  # Bu sinyali atla, sonrakine geç
                                         
                                     elif trigger_type == "stop_loss":
                                         # Stop-loss oldu, sadece admin'e mesaj gönder
                                         signal['current_price_float'] = final_price
                                         await handle_stop_loss(symbol, signal)
                                         
-                                                                    # Pozisyonu ve aktif sinyali kaldır
-                            if symbol in global_positions:
-                                del global_positions[symbol]
-                            del active_signals[symbol]
-                            
-                            # Veritabanı kayıtlarını kontrol et
-                            positions_saved = save_positions_to_db(global_positions)
-                            active_signals_saved = save_active_signals_to_db(active_signals)
-                            
-                            if not positions_saved or not active_signals_saved:
-                                print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                                # Hata durumunda tekrar dene
-                                await asyncio.sleep(1)
-                                positions_saved = save_positions_to_db(global_positions)
-                                active_signals_saved = save_active_signals_to_db(active_signals)
-                                if not positions_saved or not active_signals_saved:
-                                    print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                            else:
-                                print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                            
-                            # Cooldown'a ekle
-                            global_stop_cooldown[symbol] = datetime.now()
-                            save_stop_cooldown_to_db(global_stop_cooldown)
-                            
-                            # İstatistikleri güncelle
-                            global_stats["failed_signals"] += 1
+                                        # Pozisyonu ve aktif sinyali kaldır
+                                        if symbol in global_positions:
+                                            del global_positions[symbol]
+                                        del active_signals[symbol]
+                                        
+                                        # Veritabanı kayıtlarını kontrol et
+                                        positions_saved = save_positions_to_db(global_positions)
+                                        active_signals_saved = save_active_signals_to_db(active_signals)
+                                        
+                                        if not positions_saved or not active_signals_saved:
+                                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
+                                            # Hata durumunda tekrar dene
+                                            await asyncio.sleep(1)
+                                            positions_saved = save_positions_to_db(global_positions)
+                                            active_signals_saved = save_active_signals_to_db(active_signals)
+                                            if not positions_saved or not active_signals_saved:
+                                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
+                                        else:
+                                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
+                                        
+                                        # Cooldown'a ekle
+                                        global_stop_cooldown[symbol] = datetime.now()
+                                        save_stop_cooldown_to_db(global_stop_cooldown)
+                                        
+                                        # İstatistikleri güncelle
+                                        global_stats["failed_signals"] += 1
+                                        global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
+                                        save_stats_to_db(global_stats)
+                                        
+                                        print(f"🛑 {symbol} - ANLIK SL işlemi tamamlandı!")
+                                        break  # Bu sinyali atla, sonrakine geç
                             global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
                             save_stats_to_db(global_stats)
                             
@@ -3823,12 +3859,14 @@ async def monitor_signals():
                 await check_existing_positions_and_cooldowns(global_positions, active_signals, global_stats, global_stop_cooldown)
                 position_check_counter = 0
             
-            # Güncel aktif sinyalleri DB'ye kaydet
+            # Güncel aktif sinyalleri DB'ye kaydet (her döngüde)
             save_active_signals_to_db(active_signals)
             
             # Global değişkenleri güncelle
             global global_active_signals
             global_active_signals = active_signals.copy()
+            
+            print(f"🔄 Aktif sinyaller güncellendi: {len(active_signals)} sinyal")
             
             # API çağrı limitlerini aşmamak için bekleme süresi - daha hızlı stop/hedef kontrolü için
             await asyncio.sleep(1)

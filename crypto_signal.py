@@ -3470,9 +3470,7 @@ async def monitor_signals():
                             # SATIŞ: fiyat düşerse kar (+), yükselirse zarar (-)
                             change_percent = ((entry_price - current_price) / entry_price) * 100
                         
-                        # Debug: hesaplama detaylarını göster
-                        print(f"🔍 {symbol} Debug: Giriş=${entry_price:.6f}, Güncel=${current_price:.6f}, Tip={signal_type}")
-                        print(f"   Hesaplama: change_percent = {change_percent:.6f}%")
+
                         
                         # 10x kaldıraç ile 100$ yatırım kar/zarar hesapla
                         investment_amount = 100  # 100$ yatırım
@@ -3612,26 +3610,28 @@ async def monitor_signals():
                             signal_type = signal.get('type', 'ALIŞ')
                             
                             if entry_price > 0 and target_price > 0 and stop_price > 0:
-                                # Anlık stop/hedef kontrolü
+                                # Anlık stop/hedef kontrolü - BASİT VE DOĞRU MANTIK
                                 if signal_type == "ALIŞ":
+                                    # ALIŞ: Fiyat yükselirse hedef, düşerse stop
                                     if final_price >= target_price:
-                                        print(f"🎯 {symbol} - ANLIK TP tetiklendi! Güncel: ${final_price:.6f} >= Hedef: ${target_price:.6f}")
+                                        print(f"🎯 {symbol} - HEDEF! Güncel: ${final_price:.6f} >= Hedef: ${target_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "take_profit"
                                         final_price = target_price
                                     elif final_price <= stop_price:
-                                        print(f"🛑 {symbol} - ANLIK SL tetiklendi! Güncel: ${final_price:.6f} <= Stop: ${stop_price:.6f}")
+                                        print(f"🛑 {symbol} - STOP! Güncel: ${final_price:.6f} <= Stop: ${stop_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "stop_loss"
                                         final_price = stop_price
                                 else:  # SATIŞ
+                                    # SATIŞ: Fiyat düşerse hedef, yükselirse stop
                                     if final_price <= target_price:
-                                        print(f"🎯 {symbol} - ANLIK TP tetiklendi! Güncel: ${final_price:.6f} <= Hedef: ${target_price:.6f}")
+                                        print(f"🎯 {symbol} - HEDEF! Güncel: ${final_price:.6f} <= Hedef: ${target_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "take_profit"
                                         final_price = target_price
                                     elif final_price >= stop_price:
-                                        print(f"🛑 {symbol} - ANLIK SL tetiklendi! Güncel: ${final_price:.6f} >= Stop: ${stop_price:.6f}")
+                                        print(f"🛑 {symbol} - STOP! Güncel: ${final_price:.6f} >= Stop: ${stop_price:.6f}")
                                         is_triggered = True
                                         trigger_type = "stop_loss"
                                         final_price = stop_price

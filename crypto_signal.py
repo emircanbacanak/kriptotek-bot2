@@ -3487,12 +3487,22 @@ async def monitor_signals():
                             stop_distance = ((stop_price - current_price) / current_price) * 100
                         
                         # Durum ikonu - SATIŞ sinyallerinde mantık tersine
-                        if change_percent > 0:
-                            status_icon = "🟢"
-                        elif change_percent < 0:
-                            status_icon = "🔴"
+                        if signal_type == "ALIŞ":
+                            # ALIŞ sinyali: fiyat yükselirse yeşil (kar), düşerse kırmızı (zarar)
+                            if change_percent > 0:
+                                status_icon = "🟢"
+                            elif change_percent < 0:
+                                status_icon = "🔴"
+                            else:
+                                status_icon = "⚪"
                         else:
-                            status_icon = "⚪"
+                            # SATIŞ sinyali: fiyat düşerse yeşil (kar), yükselirse kırmızı (zarar)
+                            if change_percent > 0:
+                                status_icon = "🟢"
+                            elif change_percent < 0:
+                                status_icon = "🔴"
+                            else:
+                                status_icon = "⚪"
                         
                         print(f"   {status_icon} {symbol} ({signal_type}): Giriş: ${entry_price:.6f} → Güncel: ${current_price:.6f} ({change_percent:+.2f}%)")
                         print(f"      💰 10x Kaldıraç: ${profit_loss_usd:+.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")

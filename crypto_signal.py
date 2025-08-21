@@ -825,6 +825,7 @@ async def help_command(update, context):
 /listadmins - Admin listesini göster
 
 🧹 **Temizleme Komutları:**
+/cleanup - Veritabanı tutarsızlığını temizle (pozisyonsuz aktif sinyalleri sil)
 /clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
 
 🔧 **Özel Yetkiler:**
@@ -1352,6 +1353,7 @@ async def setup_bot():
     app.add_handler(CommandHandler("adminekle", adminekle_command))
     app.add_handler(CommandHandler("adminsil", adminsil_command))
     app.add_handler(CommandHandler("listadmins", listadmins_command))
+    app.add_handler(CommandHandler("cleanup", cleanup_command))
     app.add_handler(CommandHandler("clearall", clear_all_command))
     
     # Genel mesaj handler'ı
@@ -2218,9 +2220,8 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     else:
                         print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                     
-                    # Herkese hedef mesajı gönder
-                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
-                    await send_signal_to_all_users(target_message)
+                    # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                    print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
                     
                     print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
                     
@@ -2258,9 +2259,8 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     else:
                         print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                     
-                                        # Sadece bot sahibine stop mesajı gönder
-                    stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
-                    await send_admin_message(stop_message)
+                                        # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                    print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
                     
                     print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
@@ -2341,7 +2341,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                             print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                         
                         # Sadece bot sahibine stop mesajı gönder
-                        stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
+                        stop_message = f"🛑 STOP BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${close_price:.4f}"
                         await send_admin_message(stop_message)
                         
                         print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
@@ -2474,9 +2474,8 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     global_successful_signals = successful_signals.copy()
                     global_failed_signals = failed_signals.copy()
                     
-                    # Herkese hedef mesajı gönder
-                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                    await send_signal_to_all_users(target_message)
+                    # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                    print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
                     
                 # Stop kontrolü: Güncel fiyat stop'u geçti mi? (ALIŞ: aşağı düşmesi zarar)
                 elif last_price <= stop_loss:
@@ -2521,12 +2520,11 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     global_successful_signals = successful_signals.copy()
                     global_failed_signals = failed_signals.copy()
                     
-                    # Bot sahibine stop mesajı gönder
-                    stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                    await send_admin_message(stop_message)
+                    # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                    print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
                     
-                    # Yeni sistem için de bildirim gönder
-                    await handle_stop_loss(symbol, active_signals.get(symbol, {}))
+                    # Pozisyon kapatma işlemi monitor_signals tarafından yapılıyor
+                    # Bu satır artık gerekli değil
             
             # SATIŞ sinyali için hedef/stop kontrolü
             elif signal_type == "SATIŞ":
@@ -2573,9 +2571,8 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     global_successful_signals = successful_signals.copy()
                     global_failed_signals = failed_signals.copy()
                     
-                    # Herkese hedef mesajı gönder
-                    target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                    await send_signal_to_all_users(target_message)
+                    # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                    print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
                     
                 # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
                 elif last_price >= stop_loss:
@@ -2620,12 +2617,20 @@ async def check_active_signals_quick(active_signals, positions, stats, stop_cool
                     global_successful_signals = successful_signals.copy()
                     global_failed_signals = failed_signals.copy()
                     
-                    # Bot sahibine stop mesajı gönder
-                    stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                    await send_admin_message(stop_message)
+                    # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                    print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
                     
-                    # Yeni sistem için de bildirim gönder
-                    await handle_stop_loss(symbol, active_signals.get(symbol, {}))
+                    # Pozisyon kapatma işlemi monitor_signals tarafından yapılıyor
+                    # Bu satır artık gerekli değil
+                    
+                    # Veritabanından da kaldır
+                    save_positions_to_db(positions)
+                    save_active_signals_to_db(active_signals)
+                    # save_failed_signals_to_db fonksiyonu tanımlı değil, kaldırıldı
+                    save_stats_to_db(stats)
+                    
+                    # Bu sinyali atla, sonrakine geç
+                    continue
                     
         except Exception as e:
             print(f"Aktif sinyal hızlı kontrol hatası: {symbol} - {str(e)}")
@@ -2775,10 +2780,8 @@ async def signal_processing_loop():
             stats["active_signals_count"] = len(active_signals)
             save_stats_to_db(stats)
             
-            # Sadece ilk kez mesaj yazdır
-            if not hasattr(signal_processing_loop, '_first_status'):
-                print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal")
-                signal_processing_loop._first_status = False
+            # Her döngüde güncel durumu yazdır (senkronizasyon kontrolü için)
+            print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal")
             
             # Aktif pozisyonları ve cooldown'daki coinleri korumalı semboller listesine ekle
             protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
@@ -2795,274 +2798,11 @@ async def signal_processing_loop():
                 await asyncio.sleep(60)
                 continue
             
-            # Sadece ilk kez mesaj yazdır
-            if not hasattr(signal_processing_loop, '_first_coin_search'):
-                print(f"🔍 {len(symbols)} coin'de sinyal aranacak (aktif pozisyon: {len(positions)}, cooldown: {len(stop_cooldown)})")
-                signal_processing_loop._first_coin_search = False
+            # Her döngüde sinyal arama durumunu yazdır (senkronizasyon kontrolü için)
+            print(f"🔍 {len(symbols)} coin'de sinyal aranacak (aktif pozisyon: {len(positions)}, cooldown: {len(stop_cooldown)})")
             
-            # Aktif pozisyonları kontrol etmeye devam et
-            for symbol, pos in list(positions.items()):
-                try:
-                    # Güncel fiyat bilgisini al
-                    df1m = await async_get_historical_data(symbol, '1m', 1)
-                    if df1m is None or df1m.empty:
-                        continue
-                    
-                    # Güncel fiyat
-                    last_price = float(df1m['close'].iloc[-1])
-                    
-                    if last_price is None or last_price <= 0:
-                        print(f"❌ {symbol} pozisyon kontrolü için geçersiz fiyat: {last_price}")
-                        continue
-                    
-                    # Aktif sinyal bilgilerini güncelle
-                    if symbol in active_signals:
-                        active_signals[symbol]["current_price"] = format_price(last_price, pos["open_price"])
-                        active_signals[symbol]["current_price_float"] = last_price
-                        active_signals[symbol]["last_update"] = str(datetime.now())
-                    
-                    # Sadece ilk kez mesaj yazdır
-                    attr_name5 = f'_first_price_check_{symbol}'
-                    if not hasattr(signal_processing_loop, attr_name5):
-                        print(f"🔍 {symbol} fiyat kontrolü: Güncel: {last_price:.6f}, Stop: {pos['stop']:.6f}, Hedef: {pos['target']:.6f}")
-                        setattr(signal_processing_loop, attr_name5, False)
-                    
-                    # Hedef/stop kontrollerine bak
-                    if pos["type"] == "ALIŞ":
-                        # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
-                        if last_price >= pos["target"]:
-                            print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! Çıkış: {format_price(last_price)}")
-                            msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                            await send_signal_to_all_users(msg)
-                            # 4 saat cooldown başlat (hedef sonrası)
-                            stop_cooldown[symbol] = datetime.now()
-                            save_stop_cooldown_to_db(stop_cooldown)
-                            
-                            # Başarılı sinyal olarak kaydet
-                            leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
-                            profit_usd = 100 * (profit_percent / 100) * leverage
-                            successful_signals[symbol] = {
-                                "symbol": symbol,
-                                "type": pos["type"],
-                                "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                "exit_price": format_price(last_price, pos["open_price"]),
-                                "target_price": format_price(pos["target"], pos["open_price"]),
-                                "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                "signals": pos["signals"],
-                                "completion_time": str(datetime.now()),
-                                "status": "SUCCESS",
-                                "profit_percent": round(profit_percent, 2),
-                                "profit_usd": round(profit_usd, 2),
-                                "leverage": leverage,
-                                "entry_time": pos.get("entry_time", str(datetime.now())),
-                                "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
-                            }
-                            
-                            # İstatistikleri güncelle
-                            stats["successful_signals"] += 1
-                            stats["total_profit_loss"] += profit_usd
-                            stats["active_signals_count"] = len(active_signals)
-                            
-                            if symbol in active_signals:
-                                del active_signals[symbol]
-                            
-                            # Pozisyonu veritabanından kaldır
-                            remove_position_from_db(symbol)
-                            del positions[symbol]
-                            
-                            # Global değişkenleri hemen güncelle (hızlı kontrol için)
-                            global global_active_signals, global_positions, global_stats, global_stop_cooldown, global_successful_signals, global_failed_signals
-                            global_active_signals = active_signals.copy()
-                            global_positions = positions.copy()
-                            global_stats = stats.copy()
-                            global_stop_cooldown = stop_cooldown.copy()
-                            global_successful_signals = successful_signals.copy()
-                            global_failed_signals = failed_signals.copy()
-                            
-                            # Yeni sistem için de bildirim gönder
-                            await handle_take_profit(symbol, {"type": pos["type"], "entry_price": pos["open_price"], "current_price_float": last_price})
-                        # Stop kontrolü: Güncel fiyat stop'u geçti mi?
-                        elif last_price <= pos["stop"]:
-                            print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
-                            print(f"   📊 Stop Detayı: Giriş: ${pos['open_price']:.6f}, Stop: ${pos['stop']:.6f}, Güncel: ${last_price:.6f}")
-                            
-                            # Bot sahibine stop mesajı gönder
-                            stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{((pos['open_price'] - pos['stop']) / pos['open_price'] * 100):.2f}\n📈 Giriş: ${pos['open_price']:.6f}\n🛑 Stop: ${pos['stop']:.6f}\n💵 Çıkış: ${last_price:.6f}"
-                            await send_admin_message(stop_message)
-                             
-                            # 4 saat cooldown başlat (stop sonrası)
-                            stop_cooldown[symbol] = datetime.now()
-                            save_stop_cooldown_to_db(stop_cooldown)
-
-                            # Başarısız sinyal olarak kaydet
-                            loss_percent = -stop_percent
-                            leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
-                            loss_usd = -100 * (stop_percent / 100) * leverage
-                            failed_signals[symbol] = {
-                                "symbol": symbol,
-                                "type": pos["type"],
-                                "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                "exit_price": format_price(last_price, pos["open_price"]),
-                                "target_price": format_price(pos["target"], pos["open_price"]),
-                                "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                "signals": pos["signals"],
-                                "completion_time": str(datetime.now()),
-                                "status": "FAILED",
-                                "loss_percent": round(loss_percent, 2),
-                                "loss_usd": round(loss_usd, 2),
-                                "leverage": leverage,
-                                "entry_time": pos.get("entry_time", str(datetime.now())),
-                                "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
-                            }
-                            
-                            # İstatistikleri güncelle
-                            stats["failed_signals"] += 1
-                            stats["total_profit_loss"] += loss_usd
-                            stats["active_signals_count"] = len(active_signals)
-                            
-                            if symbol in active_signals:
-                                del active_signals[symbol]
-                            
-                            # Pozisyonu veritabanından kaldır
-                            remove_position_from_db(symbol)
-                            del positions[symbol]
-                            
-                            # Global değişkenleri hemen güncelle (hızlı kontrol için)
-                            global_active_signals.clear()
-                            global_active_signals.update(active_signals)
-                            global_positions.clear()
-                            global_positions.update(positions)
-                            global_stats.clear()
-                            global_stats.update(stats)
-                            global_stop_cooldown.clear()
-                            global_stop_cooldown.update(stop_cooldown)
-                            global_successful_signals.clear()
-                            global_successful_signals.update(successful_signals)
-                            global_failed_signals.clear()
-                            global_failed_signals.update(failed_signals)
-                            
-                            # Yeni sistem için de bildirim gönder
-                            await handle_stop_loss(symbol, {"type": pos["type"], "entry_price": pos["open_price"], "current_price_float": last_price})
-                        elif pos["type"] == "SATIŞ":
-                            # Hedef kontrolü: Güncel fiyat hedefi geçti mi?
-                            if last_price <= pos["target"]:
-                                print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! Çıkış: {format_price(last_price)}")
-                                msg = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\nÇıkış Fiyatı: <b>{format_price(last_price)}</b>\n"
-                                await send_signal_to_all_users(msg)
-                                # 4 saat cooldown başlat (hedef sonrası)
-                                stop_cooldown[symbol] = datetime.now()
-                                save_stop_cooldown_to_db(stop_cooldown)
-                                
-                                # Başarılı sinyal olarak kaydet
-                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
-                                profit_usd = 100 * (profit_percent / 100) * leverage
-                                successful_signals[symbol] = {
-                                    "symbol": symbol,
-                                    "type": pos["type"],
-                                    "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
-                                    "target_price": format_price(pos["target"], pos["open_price"]),
-                                    "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                    "signals": pos["signals"],
-                                    "completion_time": str(datetime.now()),
-                                    "status": "SUCCESS",
-                                    "profit_percent": round(profit_percent, 2),
-                                    "profit_usd": round(profit_usd, 2),
-                                    "leverage": leverage,
-                                    "entry_time": pos.get("entry_time", str(datetime.now())),
-                                    "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
-                                }
-                                
-                                # İstatistikleri güncelle
-                                stats["successful_signals"] += 1
-                                stats["total_profit_loss"] += profit_usd
-                                
-                                if symbol in active_signals:
-                                    del active_signals[symbol]
-                                
-                                # Pozisyonu veritabanından kaldır
-                                remove_position_from_db(symbol)
-                                del positions[symbol]
-                                
-                                # Global değişkenleri hemen güncelle (hızlı kontrol için)
-                                global_active_signals.clear()
-                                global_active_signals.update(active_signals)
-                                global_positions.clear()
-                                global_positions.update(positions)
-                                global_stats.clear()
-                                global_stats.update(stats)
-                                global_stop_cooldown.clear()
-                                global_stop_cooldown.update(stop_cooldown)
-                                global_successful_signals.clear()
-                                global_successful_signals.update(successful_signals)
-                                global_failed_signals.clear()
-                                global_failed_signals.update(failed_signals)
-                                
-                                # Yeni sistem için de bildirim gönder
-                                await handle_take_profit(symbol, {"type": pos["type"], "entry_price": pos["open_price"], "current_price_float": last_price})
-                            # Stop kontrolü: Güncel fiyat stop'u geçti mi?
-                            elif last_price >= pos["stop"]:
-                                print(f"🛑 {symbol} STOP HİT! Çıkış: {format_price(last_price)}")
-                                print(f"   📊 Stop Detayı: Giriş: ${pos['open_price']:.6f}, Stop: ${pos['stop']:.6f}, Güncel: ${last_price:.6f}")
-                                
-                                # Bot sahibine stop mesajı gönder
-                                stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{((pos['stop'] - pos['open_price']) / pos['open_price'] * 100):.2f}\n📈 Giriş: ${pos['open_price']:.6f}\n🛑 Stop: ${pos['stop']:.6f}\n💵 Çıkış: ${last_price:.6f}"
-                                await send_admin_message(stop_message)
-                                 
-                                # 4 saat cooldown başlat (stop sonrası)
-                                stop_cooldown[symbol] = datetime.now()
-                                save_stop_cooldown_to_db(stop_cooldown)
-
-                                # Başarısız sinyal olarak kaydet
-                                loss_percent = -stop_percent
-                                leverage = pos.get("leverage", 10)  # Pozisyondan kaldıracı al
-                                loss_usd = -100 * (stop_percent / 100) * leverage
-                                failed_signals[symbol] = {
-                                    "symbol": symbol,
-                                    "type": pos["type"],
-                                    "entry_price": format_price(pos["open_price"], pos["open_price"]),
-                                    "exit_price": format_price(last_price, pos["open_price"]),
-                                    "stop_loss": format_price(pos["stop"], pos["open_price"]),
-                                    "signals": pos["signals"],
-                                    "completion_time": str(datetime.now()),
-                                    "status": "FAILED",
-                                    "loss_percent": round(loss_percent, 2),
-                                    "loss_usd": round(loss_usd, 2),
-                                    "leverage": leverage,
-                                    "entry_time": pos.get("entry_time", str(datetime.now())),
-                                    "duration_hours": round((datetime.now() - datetime.fromisoformat(pos.get("entry_time", str(datetime.now())))).total_seconds() / 3600, 2)
-                                }
-                                
-                                # İstatistikleri güncelle
-                                stats["failed_signals"] += 1
-                                stats["total_profit_loss"] += loss_usd
-                                
-                                if symbol in active_signals:
-                                    del active_signals[symbol]
-                                
-                                # Pozisyonu veritabanından kaldır
-                                remove_position_from_db(symbol)
-                                del positions[symbol]
-                                
-                                # Global değişkenleri hemen güncelle (hızlı kontrol için)
-                                global_active_signals.clear()
-                                global_active_signals.update(active_signals)
-                                global_positions.clear()
-                                global_positions.update(positions)
-                                global_stats.clear()
-                                global_stats.update(stats)
-                                global_stop_cooldown.clear()
-                                global_stop_cooldown.update(stop_cooldown)
-                                global_successful_signals.clear()
-                                global_successful_signals.update(successful_signals)
-                                global_failed_signals.clear()
-                                global_failed_signals.update(failed_signals)
-                                
-                                # Yeni sistem için de bildirim gönder
-                                await handle_stop_loss(symbol, {"type": pos["type"], "entry_price": pos["open_price"], "current_price_float": last_price})
-                except Exception as e:
-                    print(f"Pozisyon kontrol hatası: {symbol} - {str(e)}")
-                    continue
+                        # NOT: Pozisyon kapatma işlemi artık sadece monitor_signals() fonksiyonunda yapılıyor
+            # Bu sayede çift kontrol ve yarış koşulları engelleniyor
             
             # Her zaman yeni sinyal ara (aktif pozisyon varken de) - ZORUNLU!
             # Sadece ilk kez mesaj yazdır
@@ -3317,9 +3057,8 @@ async def signal_processing_loop():
                             global_successful_signals = successful_signals.copy()
                             global_failed_signals = failed_signals.copy()
                             
-                            # Herkese hedef mesajı gönder
-                            target_message = f"🎯 HEDEF OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                            await send_signal_to_all_users(target_message)
+                            # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                            print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
                             
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi? (ALIŞ: aşağı düşmesi zarar)
                         elif last_price <= stop_loss:
@@ -3356,9 +3095,8 @@ async def signal_processing_loop():
                                 del positions[symbol]
                             del active_signals[symbol]
                             
-                            # Sadece bot sahibine stop mesajı gönder
-                            stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                            await send_admin_message(stop_message)
+                            # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                            print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
                     
                     # SATIŞ sinyali için hedef/stop kontrolü
                     elif signal_type == "SATIŞ":
@@ -3410,9 +3148,8 @@ async def signal_processing_loop():
                             global_successful_signals = successful_signals.copy()
                             global_failed_signals = failed_signals.copy()
                             
-                            # Herkese hedef mesajı gönder
-                            target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                            await send_signal_to_all_users(target_message)
+                            # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                            print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
                             
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
                         elif last_price >= stop_loss:
@@ -3449,9 +3186,8 @@ async def signal_processing_loop():
                                 del positions[symbol]
                             del active_signals[symbol]
                             
-                            # Sadece bot sahibine stop mesajı gönder
-                            stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🛑 Stop: ${stop_loss:.4f}\n💵 Çıkış: ${last_price:.4f}"
-                            await send_admin_message(stop_message)
+                            # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
+                            print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
                     
                 except Exception as e:
                     print(f"Aktif sinyal güncelleme hatası: {symbol} - {str(e)}")
@@ -3533,26 +3269,26 @@ async def signal_processing_loop():
 async def monitor_signals():
     """
     Aktif sinyalleri sürekli olarak izler, sinyal verildiğinden beri oluşan mum verilerini kontrol eder
-    ve hedef/stop loss tetiklendiğinde işlem yapar.
+    ve hedef/stop loss tetiklendiğinde işlem yapar. Artık pozisyon kapatmaktan sorumlu TEK fonksiyondur.
     """
-    print("🚀 Yeni sinyal izleme sistemi başlatıldı!")
+    print("🚀 Sinyal izleme sistemi başlatıldı! (Tek Sorumlu)")
     
-    # Periyodik pozisyon kontrolü için sayaç
-    position_check_counter = 0
+    # <<< YENİ: Fonksiyonun kendi içinde kalıcı bir 'active_signals' kopyası olacak
+    active_signals = load_active_signals_from_db()
     
     while True:
         try:
-            # MongoDB'den aktif sinyalleri yükle
-            active_signals = load_active_signals_from_db()
-
+            # <<< YENİ: Döngünün başında DB'den okuma kaldırıldı. Sadece bellekteki kopya kullanılır.
             if not active_signals:
-                print("🔍 Aktif sinyal bulunamadı, bekleniyor...")
+                # print("🔍 Aktif sinyal bulunamadı, 5 saniye sonra yeniden denenecek...")
                 await asyncio.sleep(5)
+                # <<< YENİ: Sinyal kalmadığında DB'den tekrar yüklemeyi dene
+                active_signals = load_active_signals_from_db()
                 continue
 
             print(f"🔍 {len(active_signals)} aktif sinyal izleniyor...")
             
-            # Aktif sinyallerin durumlarını göster
+            # Aktif sinyallerin detaylı durumunu yazdır
             for symbol, signal in active_signals.items():
                 try:
                     entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
@@ -3569,8 +3305,6 @@ async def monitor_signals():
                         else:  # SATIŞ
                             # SATIŞ: fiyat düşerse kar (+), yükselirse zarar (-)
                             change_percent = ((entry_price - current_price) / entry_price) * 100
-                        
-
                         
                         # 10x kaldıraç ile 100$ yatırım kar/zarar hesapla
                         investment_amount = 100  # 100$ yatırım
@@ -3611,12 +3345,19 @@ async def monitor_signals():
                 except:
                     print(f"   ⚪ {symbol}: Durum hesaplanamadı")
             
+            # <<< YENİ: list() ile bir kopya üzerinde dönüyoruz ki döngü içinde orijinal sözlüğü değiştirebilelim.
             for symbol, signal in list(active_signals.items()):
                 try:
+                    print(f"🔍 {symbol} sinyali işleniyor...")
+                    
+                    # Sinyalin hala DB'de olup olmadığını kontrol et (başka bir yerden silinmiş olabilir)
+                    if not mongo_collection.find_one({"_id": f"active_signal_{symbol}"}):
+                        print(f"ℹ️ {symbol} sinyali DB'de bulunamadı, bellekten kaldırılıyor.")
+                        del active_signals[symbol]
+                        continue
+                        
                     # 1 dakikalık mum verilerini al - Futures API kullan
                     try:
-                        print(f"🔍 {symbol} için mum verisi çekiliyor")
-                        
                         # Futures API'den mum verisi çek
                         url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1m&limit=100"
                         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=10)) as session:
@@ -3630,245 +3371,51 @@ async def monitor_signals():
                         continue
 
                     if not klines:
-                        print(f"⚠️ {symbol} - Henüz yeni mum oluşmamış olabilir")   
+                        # print(f"⚠️ {symbol} - Henüz yeni mum oluşmamış olabilir")   
                         continue
 
                     # Mum verilerini kontrol et
                     is_triggered, trigger_type, final_price = check_klines_for_trigger(signal, klines)
                     
-                    # Manuel stop kontrolü de ekle (güvenlik için)
-                    if not is_triggered and klines:
-                        current_price = float(klines[-1][4])  # Son mumun kapanış fiyatı
-                        entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
-                        stop_price = float(str(signal.get('stop_loss', 0)).replace('$', '').replace(',', ''))
-                        signal_type = signal.get('type', 'ALIŞ')
-                        
-                        print(f"🔍 {symbol} Manuel Stop Kontrolü:")
-                        print(f"   Tip: {signal_type} | Giriş: ${entry_price:.6f} | Güncel: ${current_price:.6f} | Stop: ${stop_price:.6f}")
-                        
-                        # Manuel stop kontrolü - eşit veya geçmişse tetikle
-                        if signal_type == "ALIŞ" and current_price <= stop_price:
-                            print(f"🛑 {symbol} - Manuel SL tetiklendi! Güncel: ${current_price:.6f} <= Stop: ${stop_price:.6f}")
-                            is_triggered = True
-                            trigger_type = "stop_loss"
-                            final_price = current_price
-                        elif signal_type == "SATIŞ" and current_price >= stop_price:
-                            print(f"🛑 {symbol} - Manuel SL tetiklendi! Güncel: ${current_price:.6f} >= Stop: ${stop_price:.6f}")
-                            is_triggered = True
-                            trigger_type = "stop_loss"
-                            final_price = current_price
-                    
+                    # <<< YENİ: Pozisyon kapatma işlemi için yeni bir fonksiyon çağıracağız
                     if is_triggered:
-                        # Tetikleme türüne göre işlemi yap
-                        if trigger_type == "take_profit":
-                            # Hedefe ulaşıldı, herkese mesaj gönder
-                            signal['current_price_float'] = final_price
-                            await handle_take_profit(symbol, signal)
-                            
-                            # Pozisyonu ve aktif sinyali kaldır
-                            if symbol in global_positions:
-                                del global_positions[symbol]
-                            if symbol in active_signals:
-                                del active_signals[symbol]
-                            
-                            # Veritabanı kayıtlarını kontrol et
-                            positions_saved = save_positions_to_db(global_positions)
-                            active_signals_saved = save_active_signals_to_db(active_signals)
-                            
-                            if not positions_saved or not active_signals_saved:
-                                print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                                # Hata durumunda tekrar dene
-                                await asyncio.sleep(1)
-                                positions_saved = save_positions_to_db(global_positions)
-                                active_signals_saved = save_active_signals_to_db(active_signals)
-                                if not positions_saved or not active_signals_saved:
-                                    print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                            else:
-                                print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                            
-                            # Cooldown'a ekle
-                            global_stop_cooldown[symbol] = datetime.now()
-                            save_stop_cooldown_to_db(global_stop_cooldown)
-                            
-                            # İstatistikleri güncelle
-                            global_stats["successful_signals"] += 1
-                            global_stats["total_profit_loss"] += 100 * 0.02  # %2 kar
-                            save_stats_to_db(global_stats)
-                            
-                            print(f"✅ {symbol} - TP işlemi tamamlandı ve sinyal kaldırıldı!")
-                            break  # Bu sinyali atla, sonrakine geç
-                            
-                        elif trigger_type == "stop_loss":
-                            # Stop-loss oldu, sadece admin'e mesaj gönder
-                            signal['current_price_float'] = final_price
-                            await handle_stop_loss(symbol, signal)
-                            
-                            # Pozisyonu ve aktif sinyali kaldır
-                            if symbol in global_positions:
-                                del global_positions[symbol]
-                            if symbol in active_signals:
-                                del active_signals[symbol]
-                            
-                            # Cooldown'a ekle
-                            global_stop_cooldown[symbol] = datetime.now()
-                            save_stop_cooldown_to_db(global_stop_cooldown)
-                            
-                            # İstatistikleri güncelle
-                            global_stats["failed_signals"] += 1
-                            global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
-                            save_stats_to_db(global_stats)
-                            
-                            print(f"🛑 {symbol} - SL işlemi tamamlandı!")
-                            break  # Bu sinyali atla, sonrakine geç
+                        print(f"💥 TETİKLENDİ: {symbol}, Tip: {trigger_type}, Fiyat: {final_price}")
+                        
+                        # <<< YENİ: Merkezi kapatma fonksiyonunu çağır
+                        await close_position(symbol, trigger_type, final_price, signal)
+                        
+                        # <<< ÇOK ÖNEMLİ: Pozisyonu mevcut bellek kopyasından SİLİYORUZ.
+                        # Bu sayede bir sonraki döngüde tekrar işlenmeyecek!
+                        del active_signals[symbol]
+                        
+                        print(f"✅ {symbol} izleme listesinden kaldırıldı. Bir sonraki sinyale geçiliyor.")
+                        continue # <<< YENİ: Bir sonraki sinyale geç
                     else:
-                        # Tetikleme yoksa, anlık fiyatı güncelle ve ekstra stop/hedef kontrolü yap
+                        # Tetikleme yoksa, anlık fiyatı güncelle
                         if final_price:
-                            signal['current_price'] = f"{final_price:.6f}"
-                            signal['current_price_float'] = final_price
-                            
-                            # Ekstra agresif stop/hedef kontrolü
-                            entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
-                            target_price = float(str(signal.get('target_price', 0)).replace('$', '').replace(',', ''))
-                            stop_price = float(str(signal.get('stop_loss', 0)).replace('$', '').replace(',', ''))
-                            signal_type = signal.get('type', 'ALIŞ')
-                            
-                            if entry_price > 0 and target_price > 0 and stop_price > 0:
-                                # Anlık stop/hedef kontrolü - BASİT VE DOĞRU MANTIK
-                                if signal_type == "ALIŞ":
-                                    # ALIŞ: Fiyat yükselirse hedef, düşerse stop
-                                    if final_price >= target_price:
-                                        print(f"🎯 {symbol} - HEDEF! Güncel: ${final_price:.6f} >= Hedef: ${target_price:.6f}")
-                                        is_triggered = True
-                                        trigger_type = "take_profit"
-                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
-                                    elif final_price <= stop_price:
-                                        print(f"🛑 {symbol} - STOP! Güncel: ${final_price:.6f} <= Stop: ${stop_price:.6f}")
-                                        is_triggered = True
-                                        trigger_type = "stop_loss"
-                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
-                                else:  # SATIŞ
-                                    # SATIŞ: Fiyat düşerse hedef, yükselirse stop
-                                    if final_price <= target_price:
-                                        print(f"🎯 {symbol} - HEDEF! Güncel: ${final_price:.6f} <= Hedef: ${target_price:.6f}")
-                                        is_triggered = True
-                                        trigger_type = "take_profit"
-                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
-                                    elif final_price >= stop_price:
-                                        print(f"🛑 {symbol} - STOP! Güncel: ${final_price:.6f} >= Stop: ${stop_price:.6f}")
-                                        is_triggered = True
-                                        trigger_type = "stop_loss"
-                                        # final_price'ı değiştirme - gerçek çıkış fiyatını koru
-                                
-                                # Eğer anlık tetikleme varsa, hemen işle
-                                if is_triggered:
-                                    if trigger_type == "take_profit":
-                                        # Hedefe ulaşıldı, herkese mesaj gönder
-                                        signal['current_price_float'] = final_price
-                                        await handle_take_profit(symbol, signal)
-                                        
-                                        # Pozisyonu ve aktif sinyali kaldır
-                                        if symbol in global_positions:
-                                            del global_positions[symbol]
-                                        del active_signals[symbol]
-                                        
-                                        # Veritabanı kayıtlarını kontrol et
-                                        positions_saved = save_positions_to_db(global_positions)
-                                        active_signals_saved = save_active_signals_to_db(active_signals)
-                                        
-                                        if not positions_saved or not active_signals_saved:
-                                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                                            # Hata durumunda tekrar dene
-                                            await asyncio.sleep(1)
-                                            positions_saved = save_positions_to_db(global_positions)
-                                            active_signals_saved = save_active_signals_to_db(active_signals)
-                                            if not positions_saved or not active_signals_saved:
-                                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                                        else:
-                                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                                        
-                                        # Cooldown'a ekle
-                                        global_stop_cooldown[symbol] = datetime.now()
-                                        save_stop_cooldown_to_db(global_stop_cooldown)
-                                        
-                                        # İstatistikleri güncelle
-                                        global_stats["successful_signals"] += 1
-                                        global_stats["total_profit_loss"] += 100 * 0.02  # %2 kar
-                                        save_stats_to_db(global_stats)
-                                        
-                                        print(f"✅ {symbol} - ANLIK TP işlemi tamamlandı!")
-                                        break  # Bu sinyali atla, sonrakine geç
-                                        
-                                    elif trigger_type == "stop_loss":
-                                        # Stop-loss oldu, sadece admin'e mesaj gönder
-                                        signal['current_price_float'] = final_price
-                                        await handle_stop_loss(symbol, signal)
-                                        
-                                        # Pozisyonu ve aktif sinyali kaldır
-                                        if symbol in global_positions:
-                                            del global_positions[symbol]
-                                        del active_signals[symbol]
-                                        
-                                        # Veritabanı kayıtlarını kontrol et
-                                        positions_saved = save_positions_to_db(global_positions)
-                                        active_signals_saved = save_active_signals_to_db(active_signals)
-                                        
-                                        if not positions_saved or not active_signals_saved:
-                                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                                            # Hata durumunda tekrar dene
-                                            await asyncio.sleep(1)
-                                            positions_saved = save_positions_to_db(global_positions)
-                                            active_signals_saved = save_active_signals_to_db(active_signals)
-                                            if not positions_saved or not active_signals_saved:
-                                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                                        else:
-                                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                                        
-                                        # Cooldown'a ekle
-                                        global_stop_cooldown[symbol] = datetime.now()
-                                        save_stop_cooldown_to_db(global_stop_cooldown)
-                                        
-                                        # İstatistikleri güncelle
-                                        global_stats["failed_signals"] += 1
-                                        global_stats["total_profit_loss"] -= 100 * 0.015  # %1.5 zarar
-                                        save_stats_to_db(global_stats)
-                                        
-                                        print(f"🛑 {symbol} - ANLIK SL işlemi tamamlandı!")
-                                        break  # Bu sinyali atla, sonrakine geç
-                            
-                            # Normal kar/zarar hesaplaması
-                            if entry_price > 0:
-                                # Kâr/Zarar Yüzdesini Hesapla ve Güncelle
-                                change_percent = ((final_price - entry_price) / entry_price) * 100
-                                if signal.get('type', 'ALIŞ') == "SATIŞ":
-                                    change_percent *= -1
-                                signal['profit_loss_percent'] = change_percent
+                            active_signals[symbol]['current_price'] = format_price(final_price, signal.get('entry_price_float'))
+                            active_signals[symbol]['current_price_float'] = final_price
+                            active_signals[symbol]['last_update'] = str(datetime.now())
+                            # DB'ye anlık fiyatı kaydetmek için (opsiyonel ama iyi bir pratik)
+                            save_data_to_db(f"active_signal_{symbol}", active_signals[symbol])
+                    
+                    print(f"✅ {symbol} sinyali işlendi, bir sonraki sinyale geçiliyor...")
                     
                 except Exception as e:
-                    print(f"❌ {symbol} sinyali işlenirken hata oluştu: {e}")
+                    print(f"❌ {symbol} sinyali işlenirken döngü içinde hata oluştu: {e}")
+                    # Sorunlu sinyali listeden geçici olarak kaldırabiliriz
+                    if symbol in active_signals:
+                        del active_signals[symbol]
                     continue
             
-            # Her 60 döngüde bir pozisyon kontrolü yap (yaklaşık 1 dakikada bir)
-            position_check_counter += 1
-            if position_check_counter >= 60:
-                print("🔄 Monitor: Periyodik pozisyon kontrolü yapılıyor...")
-                await check_existing_positions_and_cooldowns(global_positions, active_signals, global_stats, global_stop_cooldown)
-                position_check_counter = 0
-            
-            # Güncel aktif sinyalleri DB'ye kaydet (her döngüde)
-            save_active_signals_to_db(active_signals)
-            
-            # Global değişkenleri güncelle
-            global global_active_signals
-            global_active_signals = active_signals.copy()
-            
-            print(f"🔄 Aktif sinyaller güncellendi: {len(active_signals)} sinyal")
-            
-            # API çağrı limitlerini aşmamak için bekleme süresi - daha hızlı stop/hedef kontrolü için
-            await asyncio.sleep(1)
+            # API çağrı limitlerini aşmamak için bekleme süresi
+            await asyncio.sleep(3) # Daha hızlı kontrol için 3 saniye
         
         except Exception as e:
             print(f"❌ Ana sinyal izleme döngüsü hatası: {e}")
             await asyncio.sleep(10)  # Hata durumunda bekle
+            # <<< YENİ: Hata sonrası DB ile yeniden senkronize ol
+            active_signals = load_active_signals_from_db()
 
 async def active_signals_monitor_loop():
     """Aktif sinyalleri sürekli izleyen paralel döngü (hedef/stop için) - ESKİ SİSTEM"""
@@ -3879,10 +3426,10 @@ async def active_signals_monitor_loop():
     
     while True:
         try:
-            # Global değişkenleri al
-            if global_active_signals:
-                print(f"🔍 Aktif sinyaller izleniyor ({len(global_active_signals)} sinyal)...")
-                await check_active_signals_quick(global_active_signals, global_positions, global_stats, global_stop_cooldown, global_successful_signals, global_failed_signals)
+            # Global değişkenleri al - check_active_signals_quick devre dışı (çift mesaj sorunu)
+            # if global_active_signals:
+            #     print(f"🔍 Aktif sinyaller izleniyor ({len(global_active_signals)} sinyal)...")
+            #     await check_active_signals_quick(global_active_signals, global_positions, global_stats, global_stop_cooldown, global_successful_signals, global_failed_signals)
             
             # Her 20 döngüde bir pozisyon kontrolü yap (yaklaşık 3.5 dakikada bir)
             position_check_counter += 1
@@ -3929,12 +3476,12 @@ async def main():
     # Yeni sinyal izleme döngüsünü paralel olarak başlat (daha hızlı ve güvenilir)
     monitor_task = asyncio.create_task(monitor_signals())
     
-    # Eski aktif sinyal izleme döngüsünü de paralel olarak başlat (yedek sistem)
-    old_monitor_task = asyncio.create_task(active_signals_monitor_loop())
+    # Eski aktif sinyal izleme döngüsünü devre dışı bırak (çift çalışma sorunu)
+    # old_monitor_task = asyncio.create_task(active_signals_monitor_loop())
     
     try:
         # Tüm task'ları bekle
-        await asyncio.gather(signal_task, monitor_task, old_monitor_task)
+        await asyncio.gather(signal_task, monitor_task)
     except KeyboardInterrupt:
         print("\n⚠️ Bot kapatılıyor...")
     except asyncio.CancelledError:
@@ -3945,11 +3492,9 @@ async def main():
             signal_task.cancel()
         if not monitor_task.done():
             monitor_task.cancel()
-        if not old_monitor_task.done():
-            old_monitor_task.cancel()
         
         try:
-            await asyncio.gather(signal_task, monitor_task, old_monitor_task, return_exceptions=True)
+            await asyncio.gather(signal_task, monitor_task, return_exceptions=True)
         except Exception:
             pass
         
@@ -3996,6 +3541,28 @@ def clear_position_data_from_db():
     except Exception as e:
         print(f"❌ MongoDB'den pozisyonlar silinirken hata: {e}")
         return 0
+
+async def cleanup_command(update, context):
+    """Veritabanı tutarsızlığını temizler (sadece bot sahibi)"""
+    user_id, is_authorized = validate_user_command(update, require_admin=False)
+    if not is_authorized or user_id != BOT_OWNER_ID:
+        await send_command_response(update, "❌ Bu komut sadece bot sahibi tarafından kullanılabilir.")
+        return
+    
+    try:
+        await send_command_response(update, "🧹 Veritabanı tutarsızlığı kontrolü başlatılıyor...")
+        
+        cleaned_count = await cleanup_orphaned_signals()
+        
+        if cleaned_count > 0:
+            message = f"✅ Temizlik tamamlandı!\n\n🧹 {cleaned_count} pozisyonsuz aktif sinyal silindi\n📊 Veritabanı tutarlılığı sağlandı"
+        else:
+            message = "✅ Veritabanı zaten tutarlı!\n\n📊 Tüm aktif sinyallerin pozisyonu mevcut"
+            
+        await send_command_response(update, message)
+        
+    except Exception as e:
+        await send_command_response(update, f"❌ Temizlik sırasında hata oluştu: {str(e)}")
 
 async def clear_all_command(update, context):
     """Tüm verileri temizler: pozisyonlar, aktif sinyaller, önceki sinyaller, bekleyen kuyruklar, istatistikler (sadece bot sahibi)"""
@@ -4254,79 +3821,150 @@ def save_stop_cooldown_to_db(stop_cooldown):
         print(f"❌ Stop cooldown MongoDB'ye kaydedilirken hata: {e}")
         return False
 
-async def handle_take_profit(symbol, signal):
-    """
-    Hedef fiyatına ulaşıldığında çağrılır. Kar hesaplaması yapar ve tüm kullanıcılara mesaj gönderir.
-    """
-    try:
-        print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ!")
-        
-        # Giriş ve çıkış fiyatlarını al
-        entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
-        exit_price = float(str(signal.get('current_price_float', 0)).replace('$', '').replace(',', ''))
-        
-        if entry_price <= 0 or exit_price <= 0:
-            print(f"⚠️ {symbol} - Geçersiz fiyat verileri: Giriş={entry_price}, Çıkış={exit_price}")
-            return
-        
-        # Kar hesaplaması
-        signal_type = signal.get('type', 'ALIŞ')
-        if signal_type == "ALIŞ":
-            # ALIŞ: Fiyat yükselirse kar
-            profit_percentage = ((exit_price - entry_price) / entry_price) * 100
-        else:  # SATIŞ
-            # SATIŞ: Fiyat düşerse kar
-            profit_percentage = ((entry_price - exit_price) / entry_price) * 100
-        
-        profit_usd = 100 * profit_percentage / 100  # 100$ yatırım için
-        
-        print(f"💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})")
-        
-        # Herkese hedef mesajı gönder
-        target_message = f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n<b>{symbol}</b> işlemi için hedef fiyatına ulaşıldı!\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.6f}\n🎯 Hedef: ${exit_price:.6f}\n💵 Çıkış: ${exit_price:.6f}"
-        await send_signal_to_all_users(target_message)
-        
-        print(f"✅ {symbol} hedef mesajı tüm kullanıcılara gönderildi")
-        
-    except Exception as e:
-        print(f"❌ handle_take_profit hatası ({symbol}): {e}")
 
-async def handle_stop_loss(symbol, signal):
+
+# <<< YENİ: Tüm pozisyon kapatma mantığını merkezileştiren fonksiyon
+async def close_position(symbol, trigger_type, final_price, signal):
     """
-    Stop-loss fiyatına ulaşıldığında çağrılır. Zarar hesaplaması yapar ve sadece bot sahibine mesaj gönderir.
+    Bir pozisyonu kapatır, ilgili tüm veritabanı kayıtlarını günceller,
+    istatistikleri işler ve bildirimleri gönderir.
     """
+    print(f"--- Pozisyon Kapatılıyor: {symbol} ({trigger_type}) ---")
     try:
-        print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ!")
-        
-        # Giriş ve çıkış fiyatlarını al
-        entry_price = float(str(signal.get('entry_price_float', signal.get('entry_price', 0))).replace('$', '').replace(',', ''))
-        exit_price = float(str(signal.get('current_price_float', 0)).replace('$', '').replace(',', ''))
-        
-        if entry_price <= 0 or exit_price <= 0:
-            print(f"⚠️ {symbol} - Geçersiz fiyat verileri: Giriş={entry_price}, Çıkış={exit_price}")
+        # Önce veritabanından pozisyonun hala var olduğunu doğrula
+        position_doc = mongo_collection.find_one({"_id": f"position_{symbol}"})
+        if not position_doc:
+            print(f"⚠️ {symbol} pozisyonu zaten kapatılmış veya DB'de bulunamadı. Yinelenen işlem engellendi.")
+            # Bellekteki global değişkenlerden de temizle
+            global_positions.pop(symbol, None)
+            global_active_signals.pop(symbol, None)
             return
         
-        # Zarar hesaplaması
+        entry_price = float(str(signal.get('entry_price_float', 0)))
         signal_type = signal.get('type', 'ALIŞ')
-        if signal_type == "ALIŞ":
-            # ALIŞ: Fiyat düşerse zarar
-            loss_percentage = ((entry_price - exit_price) / entry_price) * 100
-        else:  # SATIŞ
-            # SATIŞ: Fiyat yükselirse zarar
-            loss_percentage = ((exit_price - entry_price) / entry_price) * 100
+        leverage = signal.get('leverage', 10)
         
-        loss_usd = 100 * loss_percentage / 100  # 100$ yatırım için
+        # Kar/Zarar hesaplaması
+        profit_loss_percent = 0
+        if entry_price > 0:
+            if signal_type == "ALIŞ":
+                profit_loss_percent = ((final_price - entry_price) / entry_price) * 100
+            else: # SATIŞ
+                profit_loss_percent = ((entry_price - final_price) / entry_price) * 100
         
-        print(f"💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})")
+        profit_loss_usd = (100 * (profit_loss_percent / 100)) * leverage # 100$ ve kaldıraç ile
         
-        # Sadece bot sahibine stop mesajı gönder
-        stop_message = f"🛑 STOP OLDU!\n\n🔹 Kripto Çifti: {symbol}\n💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})\n📈 Giriş: ${entry_price:.6f}\n🛑 Stop: ${exit_price:.6f}\n💵 Çıkış: ${exit_price:.6f}"
-        await send_admin_message(stop_message)
+        # İstatistikleri yükle ve güncelle
+        stats = load_stats_from_db()
         
-        print(f"✅ {symbol} stop mesajı bot sahibine gönderildi")
+        if trigger_type == "take_profit":
+            stats["successful_signals"] = stats.get("successful_signals", 0) + 1
+            stats["total_profit_loss"] = stats.get("total_profit_loss", 0) + profit_loss_usd
+            message = (
+                f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n"
+                f"🔹 <b>Kripto Çifti:</b> {symbol}\n"
+                f"💰 <b>Kar:</b> %{profit_loss_percent:.2f} (${profit_loss_usd:.2f})\n"
+                f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"
+                f"💵 <b>Çıkış:</b> ${final_price:.6f}"
+            )
+            await send_signal_to_all_users(message)
+            await send_admin_message(message) # <<< ÖNEMLİ: Bot sahibine de garantili gönderim
+        
+        elif trigger_type == "stop_loss":
+            stats["failed_signals"] = stats.get("failed_signals", 0) + 1
+            stats["total_profit_loss"] = stats.get("total_profit_loss", 0) + profit_loss_usd
+            message = (
+                f"🛑 <b>STOP OLDU!</b> 🛑\n\n"
+                f"🔹 <b>Kripto Çifti:</b> {symbol}\n"
+                f"💸 <b>Zarar:</b> %{profit_loss_percent:.2f} (${profit_loss_usd:.2f})\n"
+                f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"
+                f"💵 <b>Çıkış:</b> ${final_price:.6f}"
+            )
+            await send_admin_message(message) # Sadece bot sahibine
+        
+        # --- VERİTABANI TEMİZLİK VE GÜNCELLEME İŞLEMLERİ ---
+        
+        # 1. Pozisyonu veritabanından kaldır
+        remove_position_from_db(symbol)
+        
+        # 2. Aktif sinyali veritabanından kaldır
+        clear_specific_document(f"active_signal_{symbol}", f"{symbol} aktif sinyali")
+        
+        # 3. Cooldown ekle ve veritabanına kaydet
+        stop_cooldown = load_stop_cooldown_from_db()
+        stop_cooldown[symbol] = str(datetime.now())
+        save_stop_cooldown_to_db(stop_cooldown)
+        
+        # 4. İstatistikleri veritabanına kaydet
+        stats["active_signals_count"] = max(0, stats.get("active_signals_count", 1) - 1)
+        save_stats_to_db(stats)
+        
+        # 5. Global değişkenleri güncelle (komutların doğru çalışması için)
+        global_positions.pop(symbol, None)
+        global_active_signals.pop(symbol, None)
+        global_stop_cooldown[symbol] = datetime.now()
+        global_stats.update(stats)
+        
+        print(f"--- Pozisyon Kapatma Tamamlandı: {symbol} ---")
         
     except Exception as e:
-        print(f"❌ handle_stop_loss hatası ({symbol}): {e}")
+        print(f"❌ close_position fonksiyonunda kritik hata ({symbol}): {e}")
+
+async def cleanup_orphaned_signals():
+    """
+    Pozisyonu olmayan aktif sinyalleri temizler (veritabanı tutarsızlığını düzeltir)
+    """
+    try:
+        print("🧹 Veritabanı tutarsızlığı kontrolü başlatılıyor...")
+        
+        # Pozisyonları ve aktif sinyalleri yükle
+        positions = load_positions_from_db()
+        active_signals = load_active_signals_from_db()
+        
+        print(f"📊 Mevcut durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal")
+        
+        # Pozisyonu olmayan aktif sinyalleri bul
+        orphaned_signals = []
+        for symbol in active_signals.keys():
+            if symbol not in positions:
+                orphaned_signals.append(symbol)
+        
+        if orphaned_signals:
+            print(f"🔍 {len(orphaned_signals)} pozisyonsuz aktif sinyal bulundu: {', '.join(orphaned_signals)}")
+            
+            # Pozisyonsuz sinyalleri temizle
+            for symbol in orphaned_signals:
+                try:
+                    # Aktif sinyal dokümanını sil
+                    result = mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                    if result.deleted_count > 0:
+                        print(f"✅ {symbol} aktif sinyali veritabanından silindi")
+                    else:
+                        print(f"⚠️ {symbol} aktif sinyali veritabanında bulunamadı")
+                    
+                    # Bellekten de kaldır
+                    if symbol in active_signals:
+                        del active_signals[symbol]
+                        
+                except Exception as e:
+                    print(f"❌ {symbol} aktif sinyali silinirken hata: {e}")
+            
+            # İstatistikleri güncelle
+            stats = load_stats_from_db()
+            stats["active_signals_count"] = len(positions)  # Pozisyon sayısına eşitle
+            save_stats_to_db(stats)
+            
+            print(f"🧹 Temizlik tamamlandı: {len(orphaned_signals)} pozisyonsuz sinyal silindi")
+            print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal")
+            
+            return len(orphaned_signals)
+        else:
+            print("✅ Veritabanı tutarlı: Tüm aktif sinyallerin pozisyonu mevcut")
+            return 0
+            
+    except Exception as e:
+        print(f"❌ Veritabanı temizleme hatası: {e}")
+        return 0
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1816,7 +1816,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
     volume_formatted = format_volume(volume)
     
     message = f"""
-{'🟢' if dominant_signal == 'ALIŞ' else '🔴'} {sinyal_tipi} {'🟢' if dominant_signal == 'ALIŞ' else '🔴'}
+{sinyal_tipi}
 
 🔹 Kripto Çifti: {symbol}  
 💵 Giriş Fiyatı: {price_str}

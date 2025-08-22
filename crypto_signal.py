@@ -2711,6 +2711,9 @@ async def signal_processing_loop():
         print("🔄 Bot başlangıcında mevcut durumlar kontrol ediliyor...")
         await check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown)
         
+        # Global stop_cooldown değişkenini güncelle
+        global_stop_cooldown = stop_cooldown.copy()
+        
         # Bot başlangıcında eski sinyal cooldown'ları temizle
         print("🧹 Bot başlangıcında eski sinyal cooldown'ları temizleniyor...")
         await clear_cooldown_status()
@@ -2736,6 +2739,9 @@ async def signal_processing_loop():
                 print("🔄 Periyodik pozisyon kontrolü yapılıyor...")
                 await check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown)
                 position_check_counter = 0
+                
+                # Global stop_cooldown değişkenini güncelle
+                global_stop_cooldown = stop_cooldown.copy()
             
             # Aktif sinyalleri positions ile senkronize et (her döngüde)
             for symbol in list(active_signals.keys()):
@@ -2762,7 +2768,7 @@ async def signal_processing_loop():
             save_stats_to_db(stats)
             
             # Her döngüde güncel durumu yazdır (senkronizasyon kontrolü için)
-            print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal")
+            print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
             
             # Aktif pozisyonları ve cooldown'daki coinleri korumalı semboller listesine ekle
             protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
@@ -3036,6 +3042,9 @@ async def signal_processing_loop():
                             # Stop cooldown'a ekle
                             stop_cooldown[symbol] = datetime.now()
                             
+                            # Cooldown'ı veritabanına kaydet
+                            save_stop_cooldown_to_db(stop_cooldown)
+                            
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
@@ -3091,6 +3100,9 @@ async def signal_processing_loop():
                             # Stop cooldown'a ekle
                             stop_cooldown[symbol] = datetime.now()
                             
+                            # Cooldown'ı veritabanına kaydet
+                            save_stop_cooldown_to_db(stop_cooldown)
+                            
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
@@ -3144,6 +3156,9 @@ async def signal_processing_loop():
                             # Stop cooldown'a ekle
                             stop_cooldown[symbol] = datetime.now()
                             
+                            # Cooldown'ı veritabanına kaydet
+                            save_stop_cooldown_to_db(stop_cooldown)
+                            
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
@@ -3194,7 +3209,12 @@ async def signal_processing_loop():
                             # İstatistikleri güncelle
                             stats["failed_signals"] += 1
                             stats["total_profit_loss"] -= loss_usd
+                            
+                            # Stop cooldown'a ekle
                             stop_cooldown[symbol] = datetime.now()
+                            
+                            # Cooldown'ı veritabanına kaydet
+                            save_stop_cooldown_to_db(stop_cooldown)
                             
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
@@ -4077,11 +4097,18 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
         mongo_collection.delete_one({"_id": f"position_{symbol}"})
         mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
         
+        # Cooldown'a ekle (4 saat)
+        global global_stop_cooldown
+        global_stop_cooldown[symbol] = datetime.now()
+        
+        # Cooldown'ı veritabanına kaydet
+        save_stop_cooldown_to_db({symbol: datetime.now()})
+        
         # Bellekteki global değişkenlerden de temizle
         global_positions.pop(symbol, None)
         global_active_signals.pop(symbol, None)
         
-        print(f"✅ {symbol} pozisyonu başarıyla kapatıldı")
+        print(f"✅ {symbol} pozisyonu başarıyla kapatıldı ve 4 saat cooldown'a eklendi")
         
     except Exception as e:
         print(f"❌ {symbol} pozisyon kapatılırken hata: {e}")

@@ -2802,9 +2802,12 @@ async def signal_processing_loop():
                     print(f"⏳ {i+1}/{len(symbols)} sembol kontrol edildi...")
 
                 # Halihazırda pozisyon varsa, cooldown'daysa veya sinyal cooldown'daysa atla
-                if (symbol in positions or 
-                    check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]) or
-                    await check_signal_cooldown(symbol)):
+                if symbol in positions:
+                    continue
+                if check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]):
+                    continue
+                if await check_signal_cooldown(symbol):
+                    print(f"⏳ {symbol} sinyal cooldown'da, atlanıyor")
                     continue
                 
                 # Sinyal potansiyelini kontrol et
@@ -2823,6 +2826,13 @@ async def signal_processing_loop():
                 # Sinyal bulunamadığında cooldown'ı temizle (normal çalışma modunda)
                 await clear_cooldown_status()
                 continue
+
+            # Debug: Cooldown durumunu kontrol et
+            cooldown_count = 0
+            for symbol in symbols:
+                if await check_signal_cooldown(symbol):
+                    cooldown_count += 1
+            print(f"📊 Cooldown durumu: {cooldown_count}/{len(symbols)} sembol cooldown'da")
 
             print(f"🎯 Toplam {len(found_signals)} sinyal bulundu!")
             

@@ -2473,8 +2473,6 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                             print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
                     else:
                         print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                    print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
-                    
                     print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
                     
                 min_stop_diff = stop_loss * 0.001 
@@ -2545,7 +2543,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         active_signals_saved = save_active_signals_to_db(active_signals)
                         
                         if not positions_saved or not active_signals_saved:
-                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
+                            print(f"⚠️ {symbol} veritabanı kaydı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
                             # Hata durumunda tekrar dene
                             await asyncio.sleep(1)
                             positions_saved = save_positions_to_db(positions)
@@ -2555,9 +2553,6 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         else:
                             print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                         
-                        # Herkese hedef mesajı gönder
-                        target_message = f"🎯 HEDEF BAŞARIYLA GERÇEKLEŞTİ!\n\n🔹 Kripto Çifti: {symbol}\n💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})\n📈 Giriş: ${entry_price:.4f}\n🎯 Hedef: ${target_price:.4f}\n💵 Çıkış: ${close_price:.4f}"
-                        await send_signal_to_all_users(target_message)
                         print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
                         
                     # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SATIŞ: yukarı çıkması zarar)
@@ -4059,7 +4054,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 f"💵 <b>Çıkış:</b> ${final_price_float:.6f}"
             )
             await send_signal_to_all_users(message)
-            await send_admin_message(message) # <<< ÖNEMLİ: Bot sahibine de garantili gönderim
+            # Bot sahibine hedef mesajı gönderme
         
         elif trigger_type == "stop_loss":
             # Atomik güncelleme ile istatistikleri güncelle

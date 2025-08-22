@@ -2437,7 +2437,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
             if signal_type == "ALIŞ" or signal_type == "ALIS":
                 min_target_diff = target_price * 0.001 
                 if close_price >= target_price and (close_price - target_price) >= min_target_diff:
-                    print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                    print(f"🎯 {symbol} HEDEF OLDU!")
                     
                     # İstatistikleri güncelle
                     stats["successful_signals"] += 1
@@ -2520,7 +2520,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                 elif signal_type == "SATIŞ" or signal_type == "SATIS":
                     min_target_diff = target_price * 0.001  # %0.1 minimum fark (daha güvenli)
                     if close_price <= target_price and (target_price - close_price) >= min_target_diff:
-                        print(f"🎯 {symbol} HEDEF BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                        print(f"🎯 {symbol}  HEDEF OLDU!")
                         stats["successful_signals"] += 1
                         if entry_price > 0:
                             profit_percentage = ((entry_price - target_price) / entry_price) * 100
@@ -4047,7 +4047,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             })
             
             message = (
-                f"🎯 <b>HEDEF BAŞARIYLA GERÇEKLEŞTİ!</b> 🎯\n\n"
+                f"🎯 <b>HEDEF OLDU!</b> 🎯\n\n"
                 f"🔹 <b>Kripto Çifti:</b> {symbol}\n"
                 f"💰 <b>Kar:</b> %{profit_loss_percent:.2f} (${profit_loss_usd:.2f})\n"
                 f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"

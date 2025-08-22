@@ -1829,8 +1829,6 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
 • Bu bir yatırım tavsiyesi değildir
 • Stopunuzu en fazla %25 ayarlayın
 • Yüksek kaldıraçtan uzak durun
-• Risk yönetimi yapın
-• Sadece kaybetmeyi göze alabileceğiniz miktarı yatırın
 
 📺 <b>Kanallar:</b>
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""

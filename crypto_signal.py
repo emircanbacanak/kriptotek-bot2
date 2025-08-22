@@ -639,6 +639,36 @@ async def clear_signal_cooldown(symbol):
         print(f"❌ Sinyal cooldown temizlenirken hata: {e}")
         return False
 
+async def get_expired_cooldown_signals():
+    """Cooldown süresi biten sinyalleri döndürür ve temizler."""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return []
+        
+        expired_signals = []
+        current_time = datetime.now()
+        
+        # Süresi biten cooldown'ları bul
+        expired_docs = mongo_collection.find({
+            "_id": {"$regex": "^signal_cooldown_"},
+            "until": {"$lte": current_time}
+        })
+        
+        for doc in expired_docs:
+            symbol = doc["_id"].replace("signal_cooldown_", "")
+            expired_signals.append(symbol)
+            # Süresi biten cooldown'ı sil
+            mongo_collection.delete_one({"_id": doc["_id"]})
+        
+        if expired_signals:
+            print(f"🔄 {len(expired_signals)} sinyal cooldown süresi bitti: {', '.join(expired_signals)}")
+        
+        return expired_signals
+    except Exception as e:
+        print(f"❌ Süresi biten cooldown sinyalleri alınırken hata: {e}")
+        return []
+
 async def get_volumes_for_symbols(symbols):
     """Belirtilen semboller için hacim verilerini Binance'den çeker."""
     try:
@@ -1287,7 +1317,7 @@ async def test_command(update, context):
     if not is_admin(user_id):
         return 
     
-    test_message = """🚨 AL SİNYALİ 🚨
+    test_message = """🟢 ALIŞ SİNYALİ 🟢
 
 🔹 Kripto Çifti: BTCUSDT  
 💵 Giriş Fiyatı: $45,000.00
@@ -1299,6 +1329,9 @@ async def test_command(update, context):
 ⚠️ <b>ÖNEMLİ UYARILAR:</b>
 • Bu bir yatırım tavsiyesi değildir
 • Stopunuzu en fazla %25 ayarlayın
+• Yüksek kaldıraçtan uzak durun
+• Risk yönetimi yapın
+• Sadece kaybetmeyi göze alabileceğiniz miktarı yatırın
 
 📺 <b>Kanallar:</b>
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>
@@ -1724,7 +1757,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
         return None, None, None, None, None, None, None
 
     if buy_signals == 7 and sell_signals == 0:
-        sinyal_tipi = "ALIŞ SİNYALİ"
+        sinyal_tipi = "🟢 ALIŞ SİNYALİ 🟢"
         target_price = price * (1 + profit_percent / 100)  # Örnek: 100 × 1.02 = 102 (yukarı)
         stop_loss = price * (1 - stop_percent / 100)       # Örnek: 100 × 0.985 = 98.5 (aşağı)
         dominant_signal = "ALIŞ"
@@ -1744,7 +1777,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
             print(f"   Düzeltildi: Hedef fiyat = {target_price}")
         
     elif sell_signals == 7 and buy_signals == 0:
-        sinyal_tipi = "SATIŞ SİNYALİ"
+        sinyal_tipi = "🔴 SATIŞ SİNYALİ 🔴"
         target_price = price * (1 - profit_percent / 100)  # Örnek: 100 × 0.98 = 98 (aşağı)
         stop_loss = price * (1 + stop_percent / 100)       # Örnek: 100 × 1.015 = 101.5 (yukarı)
         dominant_signal = "SATIŞ"
@@ -1783,7 +1816,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
     volume_formatted = format_volume(volume)
     
     message = f"""
-🚨 {sinyal_tipi} 🚨
+{'🟢' if dominant_signal == 'ALIŞ' else '🔴'} {sinyal_tipi} {'🟢' if dominant_signal == 'ALIŞ' else '🔴'}
 
 🔹 Kripto Çifti: {symbol}  
 💵 Giriş Fiyatı: {price_str}
@@ -1795,6 +1828,9 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
 ⚠️ <b>ÖNEMLİ UYARILAR:</b>
 • Bu bir yatırım tavsiyesi değildir
 • Stopunuzu en fazla %25 ayarlayın
+• Yüksek kaldıraçtan uzak durun
+• Risk yönetimi yapın
+• Sadece kaybetmeyi göze alabileceğiniz miktarı yatırın
 
 📺 <b>Kanallar:</b>
 🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>"""
@@ -2795,20 +2831,31 @@ async def signal_processing_loop():
             print(f"📊 Toplam {len(symbols)} sembol kontrol edilecek...")
             processed_signals_in_loop = 0  # Bu döngüde işlenen sinyal sayacı
             
+            # Cooldown süresi biten sinyalleri kontrol et ve aktif hale getir
+            expired_cooldown_signals = await get_expired_cooldown_signals()
+            if expired_cooldown_signals:
+                print(f"🔄 Cooldown süresi biten {len(expired_cooldown_signals)} sinyal tekrar değerlendirilecek")
+            
             # Tüm semboller için sinyal potansiyelini kontrol et ve topla
             for i, symbol in enumerate(symbols):
                 # Her 20 sembolde bir ilerleme göster
                 if (i + 1) % 20 == 0:  
                     print(f"⏳ {i+1}/{len(symbols)} sembol kontrol edildi...")
 
-                # Halihazırda pozisyon varsa, cooldown'daysa veya sinyal cooldown'daysa atla
+                # Halihazırda pozisyon varsa veya stop cooldown'daysa atla
                 if symbol in positions:
                     continue
                 if check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]):
                     continue
+                
+                # Sinyal cooldown kontrolü - süresi bitenler hariç
                 if await check_signal_cooldown(symbol):
-                    print(f"⏳ {symbol} sinyal cooldown'da, atlanıyor")
-                    continue
+                    # Cooldown süresi biten sinyaller tekrar değerlendirilecek
+                    if symbol in expired_cooldown_signals:
+                        print(f"🔄 {symbol} cooldown süresi bitti, tekrar değerlendiriliyor")
+                    else:
+                        print(f"⏳ {symbol} sinyal cooldown'da, atlanıyor")
+                        continue
                 
                 # Sinyal potansiyelini kontrol et
                 signal_result = await check_signal_potential(
@@ -3243,9 +3290,9 @@ async def signal_processing_loop():
             # Yeni sinyal aramaya devam et
             print("🚀 Yeni sinyal aramaya devam ediliyor...")
             
-            # Ana döngü tamamlandı
-            print("Tüm coinler kontrol edildi. 5 dakika bekleniyor...")
-            await asyncio.sleep(300)  # 5 dakika
+            # Ana döngü tamamlandı - 15 dakika sonra yeni döngü
+            print("Tüm coinler kontrol edildi. 15 dakika sonra yeni sinyal arama döngüsü başlayacak...")
+            await asyncio.sleep(900)  # 15 dakika (900 saniye)
             
         except Exception as e:
             print(f"Genel hata: {e}")

@@ -2813,10 +2813,17 @@ async def signal_processing_loop():
             save_stats_to_db(stats)
             
             # Her döngüde güncel durumu yazdır (senkronizasyon kontrolü için)
+            # Döngü sayacını artır
+            if not hasattr(signal_processing_loop, '_loop_count'):
+                signal_processing_loop._loop_count = 1
+            else:
+                signal_processing_loop._loop_count += 1
+            
             print("=" * 60)
             print("🚀 YENİ SİNYAL ARAMA DÖNGÜSÜ BAŞLIYOR")
             print(f"📊 Mevcut durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
-            print(f"⏰ Döngü zamanı: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"⏰ Döngü başlangıç: {datetime.now().strftime('%H:%M:%S')}")
+            print(f"🔄 Döngü #: {signal_processing_loop._loop_count}")
             print("=" * 60)
             
             # Aktif pozisyonları ve cooldown'daki coinleri korumalı semboller listesine ekle
@@ -3397,6 +3404,7 @@ async def signal_processing_loop():
             # Ana döngü tamamlandı - 15 dakika sonra yeni döngü
             print("=" * 60)
             print("🔄 SİNYAL ARAMA DÖNGÜSÜ TAMAMLANDI")
+            print(f"🔄 Döngü #: {getattr(signal_processing_loop, '_loop_count', 'N/A')}")
             print(f"📊 Bu döngüde kontrol edilen: {len(symbols)} sembol")
             print(f"🎯 Bulunan sinyal sayısı: {len(found_signals)}")
             if expired_cooldown_signals:

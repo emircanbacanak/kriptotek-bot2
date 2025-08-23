@@ -32,7 +32,7 @@ CONFIG = {
     "MONITOR_SLEEP_NORMAL": 3,
     "MAX_SIGNALS_PER_RUN": 5,  # Bir döngüde maksimum bulunacak sinyal sayısı
     "COOLDOWN_MINUTES": 30,  # Çok fazla sinyal bulunduğunda bekleme süresi
-    "COOLDOWN_THRESHOLD": 10  # Bu sayıdan fazla sinyal bulunursa cooldown'a gir
+
 }
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -2813,7 +2813,11 @@ async def signal_processing_loop():
             save_stats_to_db(stats)
             
             # Her döngüde güncel durumu yazdır (senkronizasyon kontrolü için)
-            print(f"📊 Güncel durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
+            print("=" * 60)
+            print("🚀 YENİ SİNYAL ARAMA DÖNGÜSÜ BAŞLIYOR")
+            print(f"📊 Mevcut durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
+            print(f"⏰ Döngü zamanı: {datetime.now().strftime('%H:%M:%S')}")
+            print("=" * 60)
             
             # Aktif pozisyonları ve cooldown'daki coinleri korumalı semboller listesine ekle
             protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
@@ -2907,7 +2911,20 @@ async def signal_processing_loop():
             # Cooldown süresi biten sinyalleri kontrol et ve aktif hale getir
             expired_cooldown_signals = await get_expired_cooldown_signals()
             if expired_cooldown_signals:
-                print(f"🔄 Cooldown süresi biten {len(expired_cooldown_signals)} sinyal tekrar değerlendirilecek")
+                print(f"🔄 Cooldown süresi biten {len(expired_cooldown_signals)} sinyal tekrar değerlendirilecek: {', '.join(expired_cooldown_signals[:5])}")
+                if len(expired_cooldown_signals) > 5:
+                    print(f"   ... ve {len(expired_cooldown_signals) - 5} tane daha")
+                # Cooldown'dan çıkan sembolleri yeni sinyal arama listesinin BAŞINA ekle (öncelik ver)
+                new_symbols_from_cooldown = [symbol for symbol in expired_cooldown_signals if symbol not in symbols]
+                if new_symbols_from_cooldown:
+                    # Cooldown'dan çıkanları başa ekle
+                    symbols = new_symbols_from_cooldown + symbols
+                    print(f"📊 Cooldown'dan çıkan {len(new_symbols_from_cooldown)} sembol öncelikli olarak eklendi. Toplam {len(symbols)} sembol kontrol edilecek")
+                    print(f"   🏆 Öncelikli semboller: {', '.join(new_symbols_from_cooldown[:5])}")
+                    if len(new_symbols_from_cooldown) > 5:
+                        print(f"      ... ve {len(new_symbols_from_cooldown) - 5} tane daha")
+            else:
+                print("ℹ️ Cooldown süresi biten sinyal bulunamadı")
             
             # Tüm semboller için sinyal potansiyelini kontrol et ve topla
             for i, symbol in enumerate(symbols):
@@ -2926,8 +2943,9 @@ async def signal_processing_loop():
                     # Cooldown süresi biten sinyaller tekrar değerlendirilecek
                     if symbol in expired_cooldown_signals:
                         print(f"🔄 {symbol} cooldown süresi bitti, tekrar değerlendiriliyor")
+                        # Cooldown'dan çıktığı için artık kontrol edilmeyecek, devam et
                     else:
-                        print(f"⏳ {symbol} sinyal cooldown'da, atlanıyor")
+                        # Hala cooldown'da olan sinyaller atlanır
                         continue
                 
                 # Sinyal potansiyelini kontrol et
@@ -2967,11 +2985,14 @@ async def signal_processing_loop():
                 reverse=True  # En yüksek hacimden en düşüğe doğru sırala
             )
 
-            # Çok fazla sinyal bulunduğunda sinyal cooldown kontrolü
-            if len(sorted_signals) > CONFIG["COOLDOWN_THRESHOLD"]:
-                print(f"🚨 {len(sorted_signals)} adet sinyal bulundu. Cooldown eşiğini ({CONFIG['COOLDOWN_THRESHOLD']}) aştığı için:")
-                print(f"   ✅ En yüksek hacimli {CONFIG['MAX_SIGNALS_PER_RUN']} sinyal hemen verilecek")
+            # Sinyal işleme mantığı: Her zaman en yüksek hacimli 5 sinyal hemen gönderilir
+            if len(sorted_signals) > CONFIG["MAX_SIGNALS_PER_RUN"]:
+                # 5'ten fazla sinyal varsa: En yüksek hacimli 5'i hemen gönder, kalanları cooldown'a al
+                print("🚨 SİNYAL COOLDOWN SİSTEMİ AKTİF!")
+                print(f"📊 {len(sorted_signals)} adet sinyal bulundu")
+                print(f"   ✅ En yüksek hacimli {CONFIG['MAX_SIGNALS_PER_RUN']} sinyal hemen gönderilecek")
                 print(f"   ⏳ Kalan {len(sorted_signals) - CONFIG['MAX_SIGNALS_PER_RUN']} sinyal 30 dakika cooldown'a girecek")
+                print(f"   🔄 Cooldown'daki sinyaller bir sonraki döngüde (15 dk sonra) tekrar değerlendirilecek")
                 
                 # En yüksek hacimli 5 sinyali hemen işle
                 top_signals = sorted_signals[:CONFIG["MAX_SIGNALS_PER_RUN"]]
@@ -2979,18 +3000,14 @@ async def signal_processing_loop():
                 # Kalan sinyalleri cooldown'a ekle
                 remaining_signals = [symbol for symbol, _ in sorted_signals[CONFIG["MAX_SIGNALS_PER_RUN"]:]]
                 if remaining_signals:
+                    print(f"⏳ Cooldown'a eklenen sinyaller: {', '.join(remaining_signals[:8])}")
+                    if len(remaining_signals) > 8:
+                        print(f"   ... ve {len(remaining_signals) - 8} tane daha")
                     await set_signal_cooldown_to_db(remaining_signals, timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
-                
             else:
-                # Normal durum: 5 veya daha az sinyal varsa hepsini işle
-                if len(sorted_signals) > CONFIG["MAX_SIGNALS_PER_RUN"]:
-                    # 5'ten fazla ama cooldown eşiğinden az: En iyi 5'ini al
-                    print(f"📊 {len(sorted_signals)} sinyal bulundu. En yüksek hacimli {CONFIG['MAX_SIGNALS_PER_RUN']} sinyal işlenecek.")
-                    top_signals = sorted_signals[:CONFIG["MAX_SIGNALS_PER_RUN"]]
-                else:
-                    # 5 veya daha az: Hepsi işlensin
-                    top_signals = sorted_signals
-                    print(f"📊 {len(sorted_signals)} sinyal bulundu. Tümü işlenecek.")
+                # 5 veya daha az sinyal varsa: Hepsi işlensin
+                top_signals = sorted_signals
+                print(f"📊 {len(sorted_signals)} sinyal bulundu. Tümü işlenecek.")
 
             # Seçilen sinyalleri işleme
             print(f"✅ En yüksek hacimli {len(top_signals)} sinyal işleniyor...")
@@ -3378,7 +3395,28 @@ async def signal_processing_loop():
             print("🚀 Yeni sinyal aramaya devam ediliyor...")
             
             # Ana döngü tamamlandı - 15 dakika sonra yeni döngü
-            print("Tüm coinler kontrol edildi. 15 dakika sonra yeni sinyal arama döngüsü başlayacak...")
+            print("=" * 60)
+            print("🔄 SİNYAL ARAMA DÖNGÜSÜ TAMAMLANDI")
+            print(f"📊 Bu döngüde kontrol edilen: {len(symbols)} sembol")
+            print(f"🎯 Bulunan sinyal sayısı: {len(found_signals)}")
+            if expired_cooldown_signals:
+                print(f"🔄 Cooldown'dan çıkan: {len(expired_cooldown_signals)} sinyal")
+            print(f"📈 Aktif pozisyon sayısı: {len(positions)}")
+            print(f"⏳ Stop cooldown'daki sembol: {len(stop_cooldown) if stop_cooldown else 0}")
+            
+            # Mevcut sinyal cooldown sayısını da göster
+            try:
+                if mongo_collection:
+                    current_signal_cooldowns = mongo_collection.count_documents({"_id": {"$regex": "^signal_cooldown_"}})
+                    print(f"⏳ Sinyal cooldown'daki sembol: {current_signal_cooldowns}")
+            except:
+                pass
+            print("=" * 60)
+            print("⏰ 15 dakika sonra yeni sinyal arama döngüsü başlayacak...")
+            print("   - Tüm coinler tekrar taranacak")
+            print("   - Cooldown süresi biten sinyaller tekrar değerlendirilecek")
+            print("   - Yeni sinyaller + cooldown'dan çıkanlar birlikte işlenecek")
+            print("=" * 60)
             await asyncio.sleep(900)  # 15 dakika (900 saniye)
             
         except Exception as e:

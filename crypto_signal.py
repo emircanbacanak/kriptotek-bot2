@@ -2663,12 +2663,18 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
             continue
     
     expired_cooldowns = []
-    for symbol, cooldown_time in list(stop_cooldown.items()):
-        if isinstance(cooldown_time, str):
-            cooldown_time = datetime.fromisoformat(cooldown_time)
+    for symbol, cooldown_until in list(stop_cooldown.items()):
+        # cooldown_until artık direkt bitiş zamanı
+        if isinstance(cooldown_until, str):
+            try:
+                cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
+            except:
+                cooldown_until = datetime.now()
+        elif not isinstance(cooldown_until, datetime):
+            cooldown_until = datetime.now()
         
-        time_diff = (datetime.now() - cooldown_time).total_seconds() / 3600
-        if time_diff >= 4:  # 4 saat geçmişse
+        # Şimdi bitiş zamanından geçmiş mi kontrol et
+        if datetime.now() >= cooldown_until:  # Süresi bitti mi?
             expired_cooldowns.append(symbol)
             print(f"✅ {symbol} cooldown süresi doldu, yeni sinyal aranabilir")
     
@@ -4038,18 +4044,23 @@ def save_stop_cooldown_to_db(stop_cooldown):
                 print("❌ MongoDB bağlantısı kurulamadı, stop cooldown kaydedilemedi")
                 return False
         
-        # Önce tüm stop cooldown verilerini sil
-        mongo_collection.delete_many({"_id": {"$regex": "^stop_cooldown_"}})
-        
-        # Yeni stop cooldown verilerini ekle
+        # Mevcut cooldown'ları güncelle, yeni olanları ekle
         for symbol, timestamp in stop_cooldown.items():
             doc_id = f"stop_cooldown_{symbol}"
-            mongo_collection.insert_one({
-                "_id": doc_id,
-                "data": timestamp,
-                "until": timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"]),  # 4 saat sonrası
-                "timestamp": datetime.now()
-            })
+            cooldown_until = timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"])  # 4 saat sonrası
+            
+            # Upsert kullan: varsa güncelle, yoksa ekle
+            mongo_collection.update_one(
+                {"_id": doc_id},
+                {
+                    "$set": {
+                        "data": timestamp,
+                        "until": cooldown_until,
+                        "timestamp": datetime.now()
+                    }
+                },
+                upsert=True  # Yoksa ekle, varsa güncelle
+            )
         
         print(f"✅ {len(stop_cooldown)} stop cooldown MongoDB'ye kaydedildi")
         return True

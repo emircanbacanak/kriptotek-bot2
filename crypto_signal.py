@@ -981,7 +981,24 @@ def load_stop_cooldown_from_db():
         
         for doc in docs:
             symbol = doc["_id"].replace("stop_cooldown_", "")
-            stop_cooldown[symbol] = doc["data"]
+            # Hem eski format (data) hem de yeni format (until) desteği
+            if "until" in doc:
+                stop_cooldown[symbol] = doc["until"]
+            elif "data" in doc:
+                # Eski format: data'dan until hesapla
+                timestamp = doc["data"]
+                if isinstance(timestamp, str):
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    except:
+                        timestamp = datetime.now()
+                elif not isinstance(timestamp, datetime):
+                    timestamp = datetime.now()
+                
+                stop_cooldown[symbol] = timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
+            else:
+                # Hiçbiri yoksa şimdiki zaman + 4 saat
+                stop_cooldown[symbol] = datetime.now() + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
         
         print(f"📊 MongoDB'den {len(stop_cooldown)} stop cooldown yüklendi")
         return stop_cooldown
@@ -2866,26 +2883,23 @@ async def signal_processing_loop():
             if stop_cooldown:
                 print(f"⏳ Cooldown'daki kriptolar ({len(stop_cooldown)} adet):")
                 current_time = datetime.now()
-                for symbol, cooldown_info in stop_cooldown.items():
-                    if isinstance(cooldown_info, dict) and 'until' in cooldown_info:
-                        cooldown_until = cooldown_info['until']
-                        if isinstance(cooldown_until, str):
-                            try:
-                                cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
-                            except:
-                                cooldown_until = current_time
-                        elif not isinstance(cooldown_until, datetime):
+                for symbol, cooldown_until in stop_cooldown.items():
+                    # Artık cooldown_until direkt datetime objesi
+                    if isinstance(cooldown_until, str):
+                        try:
+                            cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
+                        except:
                             cooldown_until = current_time
-                        
-                        remaining_time = cooldown_until - current_time
-                        if remaining_time.total_seconds() > 0:
-                            remaining_minutes = int(remaining_time.total_seconds() / 60)
-                            remaining_seconds = int(remaining_time.total_seconds() % 60)
-                            print(f"   🔴 {symbol}: {remaining_minutes}dk {remaining_seconds}sn kaldı")
-                        else:
-                            print(f"   🟢 {symbol}: Cooldown süresi bitti")
+                    elif not isinstance(cooldown_until, datetime):
+                        cooldown_until = current_time
+                    
+                    remaining_time = cooldown_until - current_time
+                    if remaining_time.total_seconds() > 0:
+                        remaining_minutes = int(remaining_time.total_seconds() / 60)
+                        remaining_seconds = int(remaining_time.total_seconds() % 60)
+                        print(f"   🔴 {symbol}: {remaining_minutes}dk {remaining_seconds}sn kaldı")
                     else:
-                        print(f"   ⚠️ {symbol}: Cooldown bilgisi eksik")
+                        print(f"   🟢 {symbol}: Cooldown süresi bitti")
                 print()  # Boş satır ekle
 
             if not hasattr(signal_processing_loop, '_first_signal_search'):
@@ -4033,6 +4047,7 @@ def save_stop_cooldown_to_db(stop_cooldown):
             mongo_collection.insert_one({
                 "_id": doc_id,
                 "data": timestamp,
+                "until": timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"]),  # 4 saat sonrası
                 "timestamp": datetime.now()
             })
         

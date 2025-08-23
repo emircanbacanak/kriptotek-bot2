@@ -1758,7 +1758,7 @@ def format_volume(volume):
         return f"${volume:,.0f}"
 
 def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, profit_percent=2.0, stop_percent=1.5):
-    """7/7 sinyal sistemi - 15m,30m,1h,2h,4h,8h,1d zaman dilimlerini kontrol et"""
+    """6/7 sinyal sistemi - 15m,30m,1h,2h,4h,8h,1d zaman dilimlerini kontrol et"""
     price_str = format_price(price, price)
     
     timeframes = ['15m', '30m', '1h', '2h', '4h', '8h', '1d']
@@ -1770,10 +1770,10 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
     buy_signals = sum(1 for s in signal_values if s == 1)
     sell_signals = sum(1 for s in signal_values if s == -1)
     
-    if buy_signals != 7 and sell_signals != 7:
+    if buy_signals < 6 and sell_signals < 6:
         return None, None, None, None, None, None, None
 
-    if buy_signals == 7 and sell_signals == 0:
+    if buy_signals >= 6 and sell_signals <= 1:
         sinyal_tipi = "🟢 ALIŞ SİNYALİ 🟢"
         target_price = price * (1 + profit_percent / 100)  # Örnek: 100 × 1.02 = 102 (yukarı)
         stop_loss = price * (1 - stop_percent / 100)       # Örnek: 100 × 0.985 = 98.5 (aşağı)
@@ -1793,7 +1793,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
             target_price = price * 1.02  # Zorla %2 artış
             print(f"   Düzeltildi: Hedef fiyat = {target_price}")
         
-    elif sell_signals == 7 and buy_signals == 0:
+    elif sell_signals >= 6 and buy_signals <= 1:
         sinyal_tipi = "🔴 SATIŞ SİNYALİ 🔴"
         target_price = price * (1 - profit_percent / 100)  # Örnek: 100 × 0.98 = 98 (aşağı)
         stop_loss = price * (1 + stop_percent / 100)       # Örnek: 100 × 1.015 = 101.5 (yukarı)
@@ -1824,9 +1824,9 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
 
     leverage_reason = ""
     
-    # 7/7 kuralı: Tüm 7 zaman dilimi aynıysa 10x kaldıraçlı
-    if max(buy_signals, sell_signals) == 7:
-        print(f"{symbol} - 7/7 sinyal")
+    # 6/7 kuralı: 7 zaman diliminden 6 tanesi aynıysa 10x kaldıraçlı
+    if max(buy_signals, sell_signals) >= 6:
+        print(f"{symbol} - 6/7 sinyal")
     
     target_price_str = format_price(target_price, price)
     stop_loss_str = format_price(stop_loss, price)
@@ -2249,28 +2249,28 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         
         buy_count, sell_count = calculate_signal_counts(current_signals, tf_names)
         
-        # 7/7 kuralı kontrol - sadece bu kural geçerli
+        # 6/7 kuralı kontrol - sadece bu kural geçerli
         print(f"🔍 {symbol} → Sinyal analizi: ALIŞ={buy_count}, SATIŞ={sell_count}")
         
-        if not check_7_7_rule(buy_count, sell_count):
+        if not check_6_7_rule(buy_count, sell_count):
             if buy_count > 0 or sell_count > 0:
-                print(f"❌ {symbol} → 7/7 kuralı sağlanmadı: ALIŞ={buy_count}, SATIŞ={sell_count} (7/7 olmalı!)")
+                print(f"❌ {symbol} → 6/7 kuralı sağlanmadı: ALIŞ={buy_count}, SATIŞ={sell_count} (6/7 olmalı!)")
                 print(f"   Detay: {current_signals}")
             previous_signals[symbol] = current_signals.copy()
             return None
         
-        print(f"✅ {symbol} → 7/7 kuralı sağlandı! ALIŞ={buy_count}, SATIŞ={sell_count}")
+        print(f"✅ {symbol} → 6/7 kuralı sağlandı! ALIŞ={buy_count}, SATIŞ={sell_count}")
         print(f"   Detay: {current_signals}")
         
-        # Sinyal türünü belirle (7/7 kuralında sadece tek tip sinyal olmalı)
-        if buy_count == 7 and sell_count == 0:
+        # Sinyal türünü belirle (6/7 kuralında 6 veya 7 aynı yönde olmalı)
+        if buy_count >= 6 and sell_count <= 1:
             sinyal_tipi = 'ALIŞ'
             dominant_signal = "ALIŞ"
-        elif sell_count == 7 and buy_count == 0:
+        elif sell_count >= 6 and buy_count <= 1:
             sinyal_tipi = 'SATIŞ'
             dominant_signal = "SATIŞ"
         else:
-            # Bu duruma asla gelmemeli çünkü 7/7 kuralı zaten kontrol edildi
+            # Bu duruma asla gelmemeli çünkü 6/7 kuralı zaten kontrol edildi
             print(f"❌ {symbol} → Beklenmeyen durum: ALIŞ={buy_count}, SATIŞ={sell_count}")
             return None
         
@@ -2718,7 +2718,7 @@ async def signal_processing_loop():
     if db_stats:
         stats.update(db_stats)
     
-    # 7/7 sinyal sistemi için timeframe'ler - 7 zaman dilimi
+    # 6/7 sinyal sistemi için timeframe'ler - 7 zaman dilimi
     timeframes = {
         '15m': '15m',
         '30m': '30m',
@@ -2728,7 +2728,7 @@ async def signal_processing_loop():
         '8h': '8h',
         '1d': '1d'
     }
-    tf_names = ['15m', '30m', '1h', '2h', '4h', '8h', '1d']  # 7/7 sistemi
+    tf_names = ['15m', '30m', '1h', '2h', '4h', '8h', '1d']  # 6/7 sistemi
 
     print("🚀 Bot başlatıldı!")
     
@@ -3926,10 +3926,10 @@ def calculate_signal_counts(signals, tf_names):
     print(f"   ALIŞ sayısı: {buy_count}, SATIŞ sayısı: {sell_count}")
     return buy_count, sell_count
 
-def check_7_7_rule(buy_count, sell_count):
-    """7/7 kuralını kontrol eder - tüm 7 zaman dilimi aynı yönde olmalı"""
-    result = buy_count == 7 or sell_count == 7
-    print(f"🔍 7/7 kural kontrolü: ALIŞ={buy_count}, SATIŞ={sell_count} → Sonuç: {result}")
+def check_6_7_rule(buy_count, sell_count):
+    """6/7 kuralını kontrol eder - 7 zaman diliminden 6 tanesi aynı yönde olmalı"""
+    result = buy_count >= 6 or sell_count >= 6
+    print(f"🔍 6/7 kural kontrolü: ALIŞ={buy_count}, SATIŞ={sell_count} → Sonuç: {result}")
     return result
 
 def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜM SİNYALLER İÇİN

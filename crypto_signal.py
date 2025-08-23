@@ -3195,8 +3195,11 @@ async def signal_processing_loop():
                             stats["failed_signals"] += 1
                             stats["total_profit_loss"] -= loss_usd
                             
-                            # Stop cooldown'a ekle
+                            # Stop cooldown'a ekle (4 saat)
                             stop_cooldown[symbol] = datetime.now()
+                            
+                            # Sinyal cooldown'a da ekle (30 dakika)
+                            await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
@@ -3308,8 +3311,11 @@ async def signal_processing_loop():
                             stats["failed_signals"] += 1
                             stats["total_profit_loss"] -= loss_usd
                             
-                            # Stop cooldown'a ekle
+                            # Stop cooldown'a ekle (4 saat)
                             stop_cooldown[symbol] = datetime.now()
+                            
+                            # Sinyal cooldown'a da ekle (30 dakika)
+                            await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)

@@ -2133,7 +2133,11 @@ def calculate_full_pine_signals(df, timeframe):
                     df.at[df.index[i], 'signal'] = -1
     return df
 
-async def get_active_high_volume_usdt_pairs(top_n=50):
+async def get_active_high_volume_usdt_pairs(top_n=50, stop_cooldown=None):
+    """
+    Yüksek hacimli USDT çiftlerini döndürür
+    stop_cooldown parametresi verilirse, cooldown'daki sembolleri filtreler
+    """
     futures_exchange_info = client.futures_exchange_info()
     
     futures_usdt_pairs = set()
@@ -2172,6 +2176,13 @@ async def get_active_high_volume_usdt_pairs(top_n=50):
     idx = 0
     while len(uygun_pairs) < top_n and idx < len(high_volume_pairs):
         symbol, volume = high_volume_pairs[idx]
+        
+        # COOLDOWN KONTROLÜ: Eğer stop_cooldown verilmişse, cooldown'daki sembolleri filtrele
+        if stop_cooldown and check_cooldown(symbol, stop_cooldown, 4):
+            print(f"⏰ {symbol} → Cooldown'da olduğu için sinyal arama listesine eklenmedi")
+            idx += 1
+            continue
+            
         try:
             df_1d = await async_get_historical_data(symbol, '1d', 30)
             if len(df_1d) < 30:
@@ -2206,6 +2217,7 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
     
     # Stop cooldown kontrolü (4 saat)
     if check_cooldown(symbol, stop_cooldown, 4):
+        # check_cooldown fonksiyonu zaten detaylı mesaj yazdırıyor
         return None
 
     try:
@@ -2439,6 +2451,19 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                 if close_price >= target_price and (close_price - target_price) >= min_target_diff:
                     print(f"🎯 {symbol} HEDEF OLDU!")
                     
+                    # Hedef mesajını gönder (yeşil indikatör ile)
+                    profit_percentage = ((target_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+                    profit_usd = 100 * (profit_percentage / 100) if entry_price > 0 else 0
+                    
+                    target_message = f"""🎯 HEDEF OLDU! 🎯
+
+🔹 Kripto Çifti: {symbol}
+💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})
+📈 Giriş: ${entry_price:.6f}
+💵 Çıkış: ${close_price:.6f}"""
+                    
+                    await send_signal_to_all_users(target_message)
+                    
                     # İstatistikleri güncelle
                     stats["successful_signals"] += 1
                     # Güvenli kâr hesaplaması
@@ -2451,7 +2476,10 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     stats["total_profit_loss"] += profit_usd
                     
                     # Cooldown'a ekle (4 saat)
-                    stop_cooldown[symbol] = datetime.now()
+                    cooldown_time = datetime.now()
+                    stop_cooldown[symbol] = cooldown_time
+                    print(f"🔒 {symbol} → HEDEF OLDU! Cooldown'a eklendi: {cooldown_time.strftime('%H:%M:%S')}")
+                    print(f"   Cooldown süresi: 4 saat → Bitiş: {(cooldown_time + timedelta(hours=4)).strftime('%H:%M:%S')}")
                     save_stop_cooldown_to_db(stop_cooldown)
                     
                     # Pozisyon ve aktif sinyali kaldır
@@ -2520,7 +2548,21 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                 elif signal_type == "SATIŞ" or signal_type == "SATIS":
                     min_target_diff = target_price * 0.001  # %0.1 minimum fark (daha güvenli)
                     if close_price <= target_price and (target_price - close_price) >= min_target_diff:
-                        print(f"🎯 {symbol}  HEDEF OLDU!")
+                        print(f"🎯 {symbol} SATIŞ HEDEF OLDU!")
+                        
+                        # Hedef mesajını gönder (yeşil indikatör ile)
+                        profit_percentage = ((entry_price - target_price) / entry_price) * 100 if entry_price > 0 else 0
+                        profit_usd = 100 * (profit_percentage / 100) if entry_price > 0 else 0
+                        
+                        target_message = f"""🎯 HEDEF OLDU! 🎯
+
+🔹 Kripto Çifti: {symbol}
+💰 Kar: %{profit_percentage:.2f} (${profit_usd:.2f})
+📈 Giriş: ${entry_price:.6f}
+💵 Çıkış: ${close_price:.6f}"""
+                        
+                        await send_signal_to_all_users(target_message)
+                        
                         stats["successful_signals"] += 1
                         if entry_price > 0:
                             profit_percentage = ((entry_price - target_price) / entry_price) * 100
@@ -2531,7 +2573,10 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         stats["total_profit_loss"] += profit_usd
                         
                         # Cooldown'a ekle (4 saat)
-                        stop_cooldown[symbol] = datetime.now()
+                        cooldown_time = datetime.now()
+                        stop_cooldown[symbol] = cooldown_time
+                        print(f"🔒 {symbol} → SATIŞ HEDEF OLDU! Cooldown'a eklendi: {cooldown_time.strftime('%H:%M:%S')}")
+                        print(f"   Cooldown süresi: 4 saat → Bitiş: {(cooldown_time + timedelta(hours=4)).strftime('%H:%M:%S')}")
                         save_stop_cooldown_to_db(stop_cooldown)
                         
                         # Pozisyon ve aktif sinyali kaldır
@@ -2774,7 +2819,10 @@ async def signal_processing_loop():
             protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
             
             # Sinyal arama için kullanılacak sembolleri filtrele
-            new_symbols = await get_active_high_volume_usdt_pairs(100)  # İlk 100 sembol
+            # Cooldown'daki sembolleri sinyal arama listesine hiç ekleme
+            print(f"🔍 Cooldown filtresi uygulanıyor... Mevcut cooldown sayısı: {len(stop_cooldown)}")
+            new_symbols = await get_active_high_volume_usdt_pairs(100, stop_cooldown)  # İlk 100 sembol (cooldown filtrelenmiş)
+            print(f"✅ Cooldown filtresi uygulandı. Filtrelenmiş sembol sayısı: {len(new_symbols)}")
             symbols = [s for s in new_symbols if s not in protected_symbols]
             
             if not symbols:
@@ -2813,7 +2861,7 @@ async def signal_processing_loop():
             protected_symbols.update(positions.keys())  # Aktif pozisyonlar
             protected_symbols.update(stop_cooldown.keys())  # Cooldown'daki coinler
             
-            # Yeni sembollere korunan sembolleri ekle
+            # Yeni sembollere korunan sembolleri ekle (cooldown'daki semboller zaten filtrelenmiş)
             symbols = list(new_symbols)
             for protected_symbol in protected_symbols:
                 if protected_symbol not in symbols:
@@ -3793,7 +3841,10 @@ def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜ
         time_diff = (datetime.now() - last_time).total_seconds() / 3600
         if time_diff < hours:
             remaining_hours = hours - time_diff
-            print(f"⏰ {symbol} → Cooldown aktif: {remaining_hours:.1f} saat kaldı")
+            remaining_minutes = (remaining_hours - int(remaining_hours)) * 60
+            end_time = (last_time + timedelta(hours=hours)).strftime('%H:%M:%S')
+            print(f"⏰ {symbol} → Cooldown aktif: {int(remaining_hours)}s {int(remaining_minutes)}dk kaldı (bitiş: {end_time})")
+            print(f"   Son hedef zamanı: {last_time.strftime('%H:%M:%S')}")
             return True  # Cooldown aktif
         else:
             del cooldown_dict[symbol]  # Cooldown doldu

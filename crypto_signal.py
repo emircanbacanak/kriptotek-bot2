@@ -2830,11 +2830,19 @@ async def signal_processing_loop():
             protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
             
             # Sinyal arama için kullanılacak sembolleri filtrele
-            # Cooldown'daki sembolleri sinyal arama listesine hiç ekleme
+            # STOP COOLDOWN'DAKİ COİNLERİ KESİNLİKLE SİNYAL ARAMA LİSTESİNE EKLEME!
             print(f"🔍 Cooldown filtresi uygulanıyor... Mevcut cooldown sayısı: {len(stop_cooldown)}")
+            if stop_cooldown:
+                print(f"🚫 STOP cooldown'daki coinler: {', '.join(list(stop_cooldown.keys())[:5])}")
+                if len(stop_cooldown) > 5:
+                    print(f"   ... ve {len(stop_cooldown) - 5} tane daha")
+            
+            # Cooldown'daki coinleri sinyal arama listesine hiç ekleme
             new_symbols = await get_active_high_volume_usdt_pairs(100, stop_cooldown)  # İlk 100 sembol (cooldown filtrelenmiş)
             print(f"✅ Cooldown filtresi uygulandı. Filtrelenmiş sembol sayısı: {len(new_symbols)}")
-            symbols = [s for s in new_symbols if s not in protected_symbols]
+            
+            # STOP COOLDOWN'DAKİ COİNLERİ KESİNLİKLE ÇIKAR
+            symbols = [s for s in new_symbols if s not in stop_cooldown and s not in positions]
             
             if not symbols:
                 # Sadece ilk kez mesaj yazdır
@@ -2893,19 +2901,9 @@ async def signal_processing_loop():
                 print(f"🔍 {len(symbols)} kripto taranacak")
                 signal_processing_loop._first_crypto_count = False
             
-            # Aktif pozisyonları ve cooldown'daki coinleri koru
-            protected_symbols = set()
-            protected_symbols.update(positions.keys())  # Aktif pozisyonlar
-            protected_symbols.update(stop_cooldown.keys())  # Cooldown'daki coinler
-            
-            # Yeni sembollere korunan sembolleri ekle (cooldown'daki semboller zaten filtrelenmiş)
-            symbols = list(new_symbols)
-            for protected_symbol in protected_symbols:
-                if protected_symbol not in symbols:
-                    symbols.append(protected_symbol)
-            
-            # Aktif pozisyonları ve cooldown'daki coinleri yeni sembol listesinden çıkar
-            symbols = [s for s in symbols if s not in protected_symbols]
+            # STOP COOLDOWN'DAKİ COİNLER ZATEN YUKARIDA FİLTRELENDİ
+            # Şimdi sadece aktif pozisyonları da çıkar
+            symbols = [s for s in symbols if s not in positions]
             
             # Sadece ilk kez mesaj yazdır
             if not hasattr(signal_processing_loop, '_first_symbol_count'):
@@ -2942,17 +2940,21 @@ async def signal_processing_loop():
                 # Halihazırda pozisyon varsa veya stop cooldown'daysa atla
                 if symbol in positions:
                     continue
+                
+                # STOP COOLDOWN KONTROLÜ - 4 saat boyunca kesinlikle sinyal verilmez!
                 if check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]):
+                    print(f"🚫 {symbol} STOP cooldown'da (4 saat), sinyal verilmez!")
                     continue
                 
                 # Sinyal cooldown kontrolü - süresi bitenler hariç
                 if await check_signal_cooldown(symbol):
                     # Cooldown süresi biten sinyaller tekrar değerlendirilecek
                     if symbol in expired_cooldown_signals:
-                        print(f"🔄 {symbol} cooldown süresi bitti, tekrar değerlendiriliyor")
+                        print(f"🔄 {symbol} sinyal cooldown süresi bitti, tekrar değerlendiriliyor")
                         # Cooldown'dan çıktığı için artık kontrol edilmeyecek, devam et
                     else:
                         # Hala cooldown'da olan sinyaller atlanır
+                        print(f"⏳ {symbol} sinyal cooldown'da (30 dakika), atlanıyor")
                         continue
                 
                 # Sinyal potansiyelini kontrol et

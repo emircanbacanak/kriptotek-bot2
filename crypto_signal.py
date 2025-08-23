@@ -2842,6 +2842,32 @@ async def signal_processing_loop():
                 print(f"   (Önceki döngüde çok fazla sinyal bulunduğu için)")
                 await asyncio.sleep(60)  # 1 dakika bekle
                 continue
+            
+            # Cooldown'daki kriptoların detaylarını göster
+            if stop_cooldown:
+                print(f"⏳ Cooldown'daki kriptolar ({len(stop_cooldown)} adet):")
+                current_time = datetime.now()
+                for symbol, cooldown_info in stop_cooldown.items():
+                    if isinstance(cooldown_info, dict) and 'until' in cooldown_info:
+                        cooldown_until = cooldown_info['until']
+                        if isinstance(cooldown_until, str):
+                            try:
+                                cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
+                            except:
+                                cooldown_until = current_time
+                        elif not isinstance(cooldown_until, datetime):
+                            cooldown_until = current_time
+                        
+                        remaining_time = cooldown_until - current_time
+                        if remaining_time.total_seconds() > 0:
+                            remaining_minutes = int(remaining_time.total_seconds() / 60)
+                            remaining_seconds = int(remaining_time.total_seconds() % 60)
+                            print(f"   🔴 {symbol}: {remaining_minutes}dk {remaining_seconds}sn kaldı")
+                        else:
+                            print(f"   🟢 {symbol}: Cooldown süresi bitti")
+                    else:
+                        print(f"   ⚠️ {symbol}: Cooldown bilgisi eksik")
+                print()  # Boş satır ekle
 
             if not hasattr(signal_processing_loop, '_first_signal_search'):
                 print("🚀 YENİ SİNYAL ARAMA BAŞLATILIYOR (aktif sinyal varken de devam eder)")

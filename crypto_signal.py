@@ -207,28 +207,27 @@ def check_klines_for_trigger(signal, klines):
             high = float(row['high'])
             low = float(row['low'])
             
-                    # Minimum tetikleme farkı (çok küçük tutarak hassas tetikleme sağla)
-        min_trigger_diff = 0.00001  # %0.01 minimum fark (daha hassas)
+
         
         # LONG sinyali kontrolü (long pozisyon)
         if signal_type == "LONG" or signal_type == "ALIS":
             # Önce hedef kontrolü (kural olarak kar alma öncelikli)
-            if high >= target_price and (high - target_price) >= (target_price * min_trigger_diff):
+            if high >= target_price:
                 print(f"✅ {symbol} - TP tetiklendi! Mum: High={high:.6f}, TP={target_price:.6f}")
                 return True, "take_profit", high
             # Sonra stop-loss kontrolü - eşit veya geçmişse
-            if low <= stop_loss_price and (stop_loss_price - low) >= (stop_loss_price * min_trigger_diff):
+            if low <= stop_loss_price:
                 print(f"❌ {symbol} - SL tetiklendi! Mum: Low={low:.6f}, SL={stop_loss_price:.6f}")
                 return True, "stop_loss", low
                 
         # SHORT sinyali kontrolü (short pozisyon)
         elif signal_type == "SATIŞ" or signal_type == "SATIS":
             # Önce hedef kontrolü
-            if low <= target_price and (target_price - low) >= (target_price * min_trigger_diff):
+            if low <= target_price:
                 print(f"✅ {symbol} - TP tetiklendi! Mum: Low={low:.6f}, TP={target_price:.6f}")
                 return True, "take_profit", low
             # Sonra stop-loss kontrolü - eşit veya geçmişse
-            if high >= stop_loss_price and (high - stop_loss_price) >= (stop_loss_price * min_trigger_diff):
+            if high >= stop_loss_price:
                 print(f"❌ {symbol} - SL tetiklendi! Mum: High={high:.6f}, SL={stop_loss_price:.6f}")
                 return True, "stop_loss", high
 
@@ -2555,8 +2554,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
             close_price = float(df1m['close'].iloc[-1])
             
             if signal_type == "LONG" or signal_type == "ALIS":
-                min_target_diff = target_price * 0.00001  # %0.0001 minimum fark (daha hassas)
-                if close_price >= target_price and (close_price - target_price) >= min_target_diff:
+                if close_price >= target_price:
                     print(f"🎯 {symbol} HEDEF GERÇEKLEŞTİ!")
                     
                     # Hedef mesajını gönder (yeşil indikatör ile) - Hedef fiyatından çıkış
@@ -2611,8 +2609,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                     print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
                     
-                min_stop_diff = stop_loss * 0.0001  # %0.01 minimum fark (daha hassas) 
-                if close_price <= stop_loss and (stop_loss - close_price) >= min_stop_diff:
+                if close_price <= stop_loss:
                     print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
                     
                     # İstatistikleri güncelle
@@ -2654,8 +2651,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     
                                 # SHORT sinyali için hedef/stop kontrolü
                 elif signal_type == "SHORT" or signal_type == "SATIS":
-                    min_target_diff = target_price * 0.0001  # %0.01 minimum fark (daha hassas)
-                    if close_price <= target_price and (target_price - close_price) >= min_target_diff:
+                    if close_price <= target_price:
                         print(f"🎯 {symbol} SHORT HEDEF GERÇEKLEŞTİ!")
                         
                         # Hedef mesajını gönder (yeşil indikatör ile) - Hedef fiyatından çıkış
@@ -3217,9 +3213,8 @@ async def signal_processing_loop():
                         
                         # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (LONG: yukarı çıkması gerekir)
                         # GÜVENLİK KONTROLÜ: Fiyat gerçekten hedefi geçti mi?
-                        # Minimum fark kontrolü: Fiyat hedefi en az 0.1% geçmeli (daha güvenli)
-                        min_target_diff = target_price * 0.00001  # %0.01 minimum fark (daha hassas)
-                        if last_price >= target_price and (last_price - target_price) >= min_target_diff:
+                        # Hedef kontrolü: Fiyat hedefi geçti mi?
+                        if last_price >= target_price:
                             # HEDEF GERÇEKLEŞTİ! 🎯
                             # Güvenli kâr hesaplaması
                             if entry_price > 0:
@@ -3274,9 +3269,8 @@ async def signal_processing_loop():
                             
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi? (LONG: aşağı düşmesi zarar)
                         # GÜVENLİK KONTROLÜ: Fiyat gerçekten stop'u geçti mi?
-                        # Minimum fark kontrolü: Fiyat stop'u en az 0.1% geçmeli (daha güvenli)
-                        min_stop_diff = stop_loss * 0.00001  # %0.01 minimum fark (daha hassas)
-                        if last_price <= stop_loss and (stop_loss - last_price) >= min_stop_diff:
+                        # Stop kontrolü: Fiyat stop'u geçti mi?
+                        if last_price <= stop_loss:
                             
                             # STOP OLDU! 🛑
                             # Güvenli zarar hesaplaması
@@ -3334,9 +3328,8 @@ async def signal_processing_loop():
                             setattr(signal_processing_loop, attr_name4, False)
                         # Hedef kontrolü: Güncel fiyat hedefi geçti mi? (SHORT: aşağı düşmesi gerekir)
                         # GÜVENLİK KONTROLÜ: Fiyat gerçekten hedefi geçti mi?
-                        # Minimum fark kontrolü: Fiyat hedefi en az 0.1% geçmeli (daha güvenli)
-                        min_target_diff = target_price * 0.00001  # %0.01 minimum fark (daha hassas)
-                        if last_price <= target_price and (target_price - last_price) >= min_target_diff:
+                        # Hedef kontrolü: Fiyat hedefi geçti mi?
+                        if last_price <= target_price:
                             # HEDEF GERÇEKLEŞTİ! 🎯
                             # Güvenli kâr hesaplaması
                             if entry_price > 0:
@@ -3390,9 +3383,8 @@ async def signal_processing_loop():
                             
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SHORT: yukarı çıkması zarar)
                         # GÜVENLİK KONTROLÜ: Fiyat gerçekten stop'u geçti mi?
-                        # Minimum fark kontrolü: Fiyat stop'u en az 0.1% geçmeli (daha güvenli)
-                        min_stop_diff = stop_loss * 0.00001  # %0.01 minimum fark (daha hassas)
-                        if last_price >= stop_loss and (last_price - stop_loss) >= min_stop_diff:
+                        # Stop kontrolü: Fiyat stop'u geçti mi?
+                        if last_price >= stop_loss:
                             
                             # STOP OLDU! 🛑
                             # Güvenli zarar hesaplaması
@@ -3681,28 +3673,26 @@ async def monitor_signals():
                         is_triggered_realtime = False
                         trigger_type_realtime = None
                         final_price_realtime = None
-                        min_trigger_diff = 0.00001  # %0.0001 minimum fark (daha hassas)
-
                         if symbol_signal_type == "ALIŞ" or symbol_signal_type == "ALIS":
                             # LONG pozisyonu için kapanış koşulları
-                            if last_price >= symbol_target_price and (last_price - symbol_target_price) >= (symbol_target_price * min_trigger_diff):
+                            if last_price >= symbol_target_price:
                                 is_triggered_realtime = True
                                 trigger_type_realtime = "take_profit"
                                 final_price_realtime = last_price
                                 print(f"✅ {symbol} - TP tetiklendi: ${last_price:.6f} >= ${symbol_target_price:.6f}")
-                            elif last_price <= symbol_stop_loss_price and (symbol_stop_loss_price - last_price) >= (symbol_stop_loss_price * min_trigger_diff):
+                            elif last_price <= symbol_stop_loss_price:
                                 is_triggered_realtime = True
                                 trigger_type_realtime = "stop_loss"
                                 final_price_realtime = last_price
                                 print(f"❌ {symbol} - SL tetiklendi: ${last_price:.6f} <= ${symbol_stop_loss_price:.6f}")
                         elif symbol_signal_type == "SATIŞ" or symbol_signal_type == "SATIS":
                             # SHORT pozisyonu için kapanış koşulları
-                            if last_price <= symbol_target_price and (symbol_target_price - last_price) >= (symbol_target_price * min_trigger_diff):
+                            if last_price <= symbol_target_price:
                                 is_triggered_realtime = True
                                 trigger_type_realtime = "take_profit"
                                 final_price_realtime = last_price
                                 print(f"✅ {symbol} - TP tetiklendi: ${last_price:.6f} <= ${symbol_target_price:.6f}")
-                            elif last_price >= symbol_stop_loss_price and (last_price - symbol_stop_loss_price) >= (symbol_stop_loss_price * min_trigger_diff):
+                            elif last_price >= symbol_stop_loss_price:
                                 is_triggered_realtime = True
                                 trigger_type_realtime = "stop_loss"
                                 final_price_realtime = last_price

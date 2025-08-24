@@ -488,26 +488,50 @@ def load_allowed_users():
         users_data = load_data_from_db("allowed_users")
         if users_data and 'user_ids' in users_data:
             ALLOWED_USERS = set(users_data['user_ids'])
-            print(f"✅ MongoDB'den {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi")
+            print(f"✅ MongoDB'den {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi (yeni format)")
         else:
-            print("ℹ️ MongoDB'de izin verilen kullanıcı bulunamadı, boş liste ile başlatılıyor")
-            ALLOWED_USERS = set()
+            # Eski format kontrolü - data.user_ids içinde olabilir
+            raw_doc = mongo_collection.find_one({"_id": "allowed_users"})
+            if raw_doc and 'data' in raw_doc and 'user_ids' in raw_doc['data']:
+                ALLOWED_USERS = set(raw_doc['data']['user_ids'])
+                print(f"✅ MongoDB'den {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi (eski format)")
+                # Eski formatı yeni formata çevir
+                save_allowed_users()
+            else:
+                print("ℹ️ MongoDB'de izin verilen kullanıcı bulunamadı, boş liste ile başlatılıyor")
+                ALLOWED_USERS = set()
         
         admin_groups_data = load_data_from_db("admin_groups")
         if admin_groups_data and 'group_ids' in admin_groups_data:
             BOT_OWNER_GROUPS = set(admin_groups_data['group_ids'])
-            print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} admin grubu yüklendi")
+            print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} admin grubu yüklendi (yeni format)")
         else:
-            print("ℹ️ MongoDB'de admin grubu bulunamadı, boş liste ile başlatılıyor")
-            BOT_OWNER_GROUPS = set()
+            # Eski format kontrolü - data.group_ids içinde olabilir
+            raw_doc = mongo_collection.find_one({"_id": "admin_groups"})
+            if raw_doc and 'data' in raw_doc and 'group_ids' in raw_doc['data']:
+                BOT_OWNER_GROUPS = set(raw_doc['data']['group_ids'])
+                print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} admin grubu yüklendi (eski format)")
+                # Eski formatı yeni formata çevir
+                save_admin_groups()
+            else:
+                print("ℹ️ MongoDB'de admin grubu bulunamadı, boş liste ile başlatılıyor")
+                BOT_OWNER_GROUPS = set()
         
         admin_users_data = load_data_from_db("admin_users")
         if admin_users_data and 'admin_ids' in admin_users_data:
             ADMIN_USERS = set(admin_users_data['admin_ids'])
-            print(f"✅ MongoDB'den {len(ADMIN_USERS)} admin kullanıcı yüklendi")
+            print(f"✅ MongoDB'den {len(ADMIN_USERS)} admin kullanıcı yüklendi (yeni format)")
         else:
-            print("ℹ️ MongoDB'de admin kullanıcı bulunamadı, boş liste ile başlatılıyor")
-            ADMIN_USERS = set()
+            # Eski format kontrolü - data.admin_ids içinde olabilir
+            raw_doc = mongo_collection.find_one({"_id": "admin_users"})
+            if raw_doc and 'data' in raw_doc and 'admin_ids' in raw_doc['data']:
+                ADMIN_USERS = set(raw_doc['data']['admin_ids'])
+                print(f"✅ MongoDB'den {len(ADMIN_USERS)} admin kullanıcı yüklendi (eski format)")
+                # Eski formatı yeni formata çevir
+                save_admin_users()
+            else:
+                print("ℹ️ MongoDB'de admin kullanıcı bulunamadı, boş liste ile başlatılıyor")
+                ADMIN_USERS = set()
     except Exception as e:
         print(f"❌ MongoDB'den veriler yüklenirken hata: {e}")
         ALLOWED_USERS = set()

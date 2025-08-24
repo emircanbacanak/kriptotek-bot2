@@ -1392,7 +1392,13 @@ async def stats_command(update, context):
     if not is_admin(user_id):
         return 
     
+    # Önce veritabanından stats'ı yükle
     stats = load_stats_from_db() or global_stats
+    
+    # Güncel pozisyon sayısını al
+    current_positions = load_positions_from_db() or {}
+    current_active_count = len(current_positions)
+    
     if not stats:
         stats_text = "📊 **Bot İstatistikleri:**\n\nHenüz istatistik verisi yok."
     else:
@@ -1401,10 +1407,11 @@ async def stats_command(update, context):
         if closed_count > 0:
             success_rate = (stats.get('successful_signals', 0) / closed_count) * 100
         
+        # Güncel aktif sinyal sayısını kullan
         computed_total = (
             stats.get('successful_signals', 0)
             + stats.get('failed_signals', 0)
-            + stats.get('active_signals_count', 0)
+            + current_active_count
         )
         
         status_emoji = "🟢"
@@ -1415,7 +1422,7 @@ async def stats_command(update, context):
 • Toplam Sinyal: {computed_total}
 • Başarılı: {stats.get('successful_signals', 0)}
 • Başarısız: {stats.get('failed_signals', 0)}
-• Aktif Sinyal: {stats.get('active_signals_count', 0)}
+• Aktif Sinyal: {current_active_count}
 • Takip Edilen Coin: {stats.get('tracked_coins_count', 0)}
 
 💰 **Kar/Zarar (100$ yatırım):**

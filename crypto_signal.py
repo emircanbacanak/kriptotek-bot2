@@ -2230,15 +2230,16 @@ def calculate_full_pine_signals(df, timeframe):
     df.loc[buy_signal, 'signal'] = 1
     df.loc[sell_signal, 'signal'] = -1
 
-    for i in range(len(df)):
-        if df['signal'].iloc[i] == 0:
-            if i > 0:
-                df.at[df.index[i], 'signal'] = df['signal'].iloc[i-1]
-            else:
-                if df['macd'].iloc[i] > df['macd_signal'].iloc[i]:
-                    df.at[df.index[i], 'signal'] = 1
-                else:
-                    df.at[df.index[i], 'signal'] = -1
+    # Sinyal devam ettirme kaldırıldı - sadece gerçek sinyaller kullanılsın
+    # for i in range(len(df)):
+    #     if df['signal'].iloc[i] == 0:
+    #         if i > 0:
+    #             df.at[df.index[i], 'signal'] = df['signal'].iloc[i-1]
+    #         else:
+    #             if df['macd'].iloc[i] > df['macd_signal'].iloc[i]:
+    #                 df.at[df.index[i], 'signal'] = 1
+    #             else:
+    #                 df.at[df.index[i], 'signal'] = -1
     return df
 
 async def get_active_high_volume_usdt_pairs(top_n=50, stop_cooldown=None):
@@ -3995,17 +3996,20 @@ async def calculate_signals_for_symbol(symbol, timeframes, tf_names):
             closest_idx = -1  # Son mum
             signal = int(df.iloc[closest_idx]['signal'])
             
+            # Sinyal 0 ise sinyal yok demektir, zorla sinyal verme!
             if signal == 0:
-                # Eğer signal 0 ise, MACD ile düzelt
-                if df['macd'].iloc[closest_idx] > df['macd_signal'].iloc[closest_idx]:
-                    signal = 1
-                else:
-                    signal = -1
+                print(f"⚠️ {symbol} {tf_name} → Sinyal yok (0), bu timeframe atlanıyor")
+                continue  # Bu timeframe'i atla, 7/7 kuralı için gerekli
             current_signals[tf_name] = signal
             
         except Exception as e:
             print(f"❌ {symbol} {tf_name} sinyal hesaplama hatası: {e}")
             return None
+    
+    # 7/7 kuralı için tüm timeframe'lerde sinyal olmalı
+    if len(current_signals) != 7:
+        print(f"❌ {symbol} → Sadece {len(current_signals)}/7 timeframe'de sinyal var, 7/7 kuralı sağlanamadı")
+        return None
     
     return current_signals
 

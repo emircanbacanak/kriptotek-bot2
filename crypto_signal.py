@@ -22,7 +22,7 @@ CONFIG = {
     "PROFIT_PERCENT": 2.0,
     "STOP_PERCENT": 1.5,
     "LEVERAGE": 10,
-    "COOLDOWN_HOURS": 4,
+    "COOLDOWN_HOURS": 8,  # 8 SAAT COOLDOWN - Hedef ve Stop için
     "MAIN_LOOP_SLEEP_SECONDS": 300,
     "MONITOR_LOOP_SLEEP_SECONDS": 3,
     "API_RETRY_ATTEMPTS": 3,
@@ -1164,6 +1164,7 @@ global_allowed_users = set()
 global_admin_users = set() 
 global_last_signal_scan_time = None
 active_signals = {}  # Global active_signals değişkeni
+position_processing_flags = {}  # Race condition önleme için pozisyon işlem flag'leri
 
 def is_authorized_chat(update):
     """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
@@ -2673,8 +2674,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         loss_usd = 0
                     stats["total_profit_loss"] -= loss_usd
                     
-                    # Cooldown'a ekle (4 saat)
-                    stop_cooldown[symbol] = datetime.now()
+                    # Cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+                    current_time = datetime.now()
+                    stop_cooldown[symbol] = current_time
                     save_stop_cooldown_to_db(stop_cooldown)
                     
                     # Pozisyon ve aktif sinyali kaldır
@@ -2771,8 +2773,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                             loss_usd = 0
                         stats["total_profit_loss"] -= loss_usd
                         
-                        # Cooldown'a ekle (4 saat)
-                        stop_cooldown[symbol] = datetime.now()
+                        # Cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+                        current_time = datetime.now()
+                        stop_cooldown[symbol] = current_time
                         save_stop_cooldown_to_db(stop_cooldown)
                         
                         del positions[symbol]
@@ -2928,7 +2931,7 @@ async def signal_processing_loop():
     position_check_counter = 0
 
     # Race condition önleme için pozisyon işlem flag'leri
-    position_processing_flags = {}  # {symbol: timestamp} - pozisyon işlenirken set edilir
+    global position_processing_flags
 
     while True:
         try:
@@ -2936,6 +2939,9 @@ async def signal_processing_loop():
                 print("⚠️ MongoDB bağlantısı kurulamadı, 30 saniye bekleniyor...")
                 await asyncio.sleep(30)
                 continue
+            
+            # DÖNGÜ BAŞINDA SÜRESİ DOLAN COOLDOWN'LARI TEMİZLE
+            await cleanup_expired_stop_cooldowns()
             
             positions = load_positions_from_db()
             active_signals = load_active_signals_from_db()
@@ -3302,14 +3308,15 @@ async def signal_processing_loop():
                             stats["successful_signals"] += 1
                             stats["total_profit_loss"] += profit_usd
                             
-                            # Stop cooldown'a ekle
-                            stop_cooldown[symbol] = datetime.now()
+                            # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+                            current_time = datetime.now()
+                            stop_cooldown[symbol] = current_time
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
                             
                             # İşlem flag'i set et (race condition önleme)
-                            position_processing_flags[symbol] = datetime.now()
+                            position_processing_flags[symbol] = current_time
 
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
@@ -3363,8 +3370,9 @@ async def signal_processing_loop():
                             stats["failed_signals"] += 1
                             stats["total_profit_loss"] -= loss_usd
                             
-                            # Stop cooldown'a ekle (4 saat)
-                            stop_cooldown[symbol] = datetime.now()
+                            # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+                            current_time = datetime.now()
+                            stop_cooldown[symbol] = current_time
                             
                             # Sinyal cooldown'a da ekle (30 dakika)
                             await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
@@ -3373,7 +3381,7 @@ async def signal_processing_loop():
                             save_stop_cooldown_to_db(stop_cooldown)
 
                             # İşlem flag'i set et (race condition önleme)
-                            position_processing_flags[symbol] = datetime.now()
+                            position_processing_flags[symbol] = current_time
 
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
@@ -3425,14 +3433,15 @@ async def signal_processing_loop():
                             stats["successful_signals"] += 1
                             stats["total_profit_loss"] += profit_usd
                             
-                            # Stop cooldown'a ekle
-                            stop_cooldown[symbol] = datetime.now()
+                            # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+                            current_time = datetime.now()
+                            stop_cooldown[symbol] = current_time
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
 
                             # İşlem flag'i set et (race condition önleme)
-                            position_processing_flags[symbol] = datetime.now()
+                            position_processing_flags[symbol] = current_time
 
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
@@ -3485,8 +3494,9 @@ async def signal_processing_loop():
                             stats["failed_signals"] += 1
                             stats["total_profit_loss"] -= loss_usd
                             
-                            # Stop cooldown'a ekle (4 saat)
-                            stop_cooldown[symbol] = datetime.now()
+                            # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+                            current_time = datetime.now()
+                            stop_cooldown[symbol] = current_time
                             
                             # Sinyal cooldown'a da ekle (30 dakika)
                             await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
@@ -3495,7 +3505,7 @@ async def signal_processing_loop():
                             save_stop_cooldown_to_db(stop_cooldown)
 
                             # İşlem flag'i set et (race condition önleme)
-                            position_processing_flags[symbol] = datetime.now()
+                            position_processing_flags[symbol] = current_time
 
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
@@ -3647,6 +3657,9 @@ async def monitor_signals():
     
     while True:
         try:
+            # MONITOR DÖNGÜSÜ BAŞINDA DA SÜRESİ DOLAN COOLDOWN'LARI TEMİZLE
+            await cleanup_expired_stop_cooldowns()
+            
             active_signals = load_active_signals_from_db()
 
             if not active_signals:
@@ -4171,19 +4184,16 @@ def check_7_7_rule(buy_count, sell_count):
     print(f"🔍 7/7 kural kontrolü: LONG={buy_count}, SHORT={sell_count} → Sonuç: {result}")
     return result
 
-def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜM SİNYALLER İÇİN
-    """Cooldown kontrolü yapar - tüm sinyaller için 4 saat"""
+def check_cooldown(symbol, cooldown_dict, hours=4):
+    """
+    Bir sembolün cooldown sözlüğünde olup olmadığını kontrol eder.
+    Temizleme işlemi artık ana döngüdeki 'cleanup_expired_stop_cooldowns' tarafından yapılıyor.
+    """
     if symbol in cooldown_dict:
-        last_time = cooldown_dict[symbol]
-        if isinstance(last_time, str):
-            last_time = datetime.fromisoformat(last_time)
-        time_diff = (datetime.now() - last_time).total_seconds() / 3600
-        if time_diff < hours:
-            return True  # Cooldown aktif
-        else:
-            del cooldown_dict[symbol]  # Cooldown doldu
-            print(f"✅ {symbol} → Cooldown süresi doldu, yeni sinyal aranabilir")
-    return False  # Cooldown yok
+        # Sembol sözlükte varsa, hala cooldown'dadır.
+        return True
+    # Sözlükte yoksa, cooldown'da değildir.
+    return False
 
 def clear_data_by_pattern(pattern, description="veri"):
     """Regex pattern ile eşleşen verileri MongoDB'den siler"""
@@ -4301,6 +4311,43 @@ def save_stop_cooldown_to_db(stop_cooldown):
     except Exception as e:
         print(f"❌ Stop cooldown MongoDB'ye kaydedilirken hata: {e}")
         return False
+
+async def cleanup_expired_stop_cooldowns():
+    """Veritabanındaki süresi dolmuş stop cooldown'ları temizler."""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, cooldown temizlenemedi")
+                return 0
+        
+        current_time = datetime.now()
+        
+        # Süresi dolmuş cooldown'ları bul ('until' alanı şu anki zamandan küçük veya eşit olanlar)
+        expired_docs_cursor = mongo_collection.find({
+            "_id": {"$regex": "^stop_cooldown_"},
+            "until": {"$lte": current_time}
+        })
+        
+        expired_symbols = [doc["_id"].replace("stop_cooldown_", "") for doc in expired_docs_cursor]
+        
+        if not expired_symbols:
+            # print("ℹ️ Süresi dolmuş stop cooldown bulunamadı.")
+            return 0
+            
+        print(f"🧹 Süresi dolmuş {len(expired_symbols)} stop cooldown bulundu: {', '.join(expired_symbols)}")
+        
+        # Bulunan süresi dolmuş cooldown'ları sil
+        delete_result = mongo_collection.delete_many({
+            "_id": {"$in": [f"stop_cooldown_{symbol}" for symbol in expired_symbols]}
+        })
+        
+        deleted_count = getattr(delete_result, "deleted_count", 0)
+        print(f"✅ Veritabanından {deleted_count} süresi dolmuş stop cooldown temizlendi.")
+        return deleted_count
+
+    except Exception as e:
+        print(f"❌ Süresi dolmuş stop cooldown'lar temizlenirken hata: {e}")
+        return 0
 
 async def close_position(symbol, trigger_type, final_price, signal, position_data=None):
     # Global active_signals değişkenini kullan
@@ -4546,12 +4593,13 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             except Exception as e2:
                 print(f"❌ {symbol} veritabanından ikinci denemede de silinemedi: {e2}")
         
-        # Cooldown'a ekle (4 saat)
+        # Cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
+        current_time = datetime.now()
         global global_stop_cooldown
-        global_stop_cooldown[symbol] = datetime.now()
+        global_stop_cooldown[symbol] = current_time
         
         # Cooldown'ı veritabanına kaydet
-        save_stop_cooldown_to_db({symbol: datetime.now()})
+        save_stop_cooldown_to_db({symbol: current_time})
         
         # Bellekteki global değişkenlerden de temizle
         global_positions.pop(symbol, None)
@@ -4562,7 +4610,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             del active_signals[symbol]
             print(f"✅ {symbol} active_signals listesinden kaldırıldı")
         
-        print(f"✅ {symbol} pozisyonu başarıyla kapatıldı ve 4 saat cooldown'a eklendi")
+        print(f"✅ {symbol} pozisyonu başarıyla kapatıldı ve 8 saat cooldown'a eklendi (pozisyon kapandığı zamandan itibaren)")
         
     except Exception as e:
         print(f"❌ {symbol} pozisyon kapatılırken hata: {e}")

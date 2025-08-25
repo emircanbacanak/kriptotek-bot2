@@ -2593,12 +2593,38 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                 mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
                 continue
             
+            # GÜVENLİK KONTROLÜ: Pozisyon hala aktif mi kontrol et
+            # Eğer pozisyon zaten kapatılmışsa, bu kontrolü atla
+            if symbol in stop_cooldown:
+                print(f"⚠️ {symbol} → Zaten cooldown'da, pozisyon kontrolü atlanıyor")
+                continue
+            
+            # Active signal dokümanını kontrol et - eğer yoksa pozisyon zaten kapatılmış demektir
+            active_signal_doc = mongo_collection.find_one({"_id": f"active_signal_{symbol}"})
+            if not active_signal_doc:
+                print(f"⚠️ {symbol} → Active signal dokümanı bulunamadı, pozisyon zaten kapatılmış")
+                # Pozisyon dokümanını da temizle
+                mongo_collection.delete_one({"_id": f"position_{symbol}"})
+                continue
+            
+            # EK GÜVENLİK KONTROLÜ: Pozisyon durumunu kontrol et
+            # Eğer pozisyon zaten 'closing' durumundaysa, bu kontrolü atla
+            if active_signal_doc.get('status') == 'closing':
+                print(f"⚠️ {symbol} → Pozisyon zaten kapatılıyor, kontrol atlanıyor")
+                continue
+            
             # Güncel fiyat bilgisini al
             df1m = await async_get_historical_data(symbol, '1m', 1)
             if df1m is None or df1m.empty:
                 continue
             
             close_price = float(df1m['close'].iloc[-1])
+            
+            # EK GÜVENLİK KONTROLÜ: Pozisyon zaten kapatılmış mı kontrol et
+            # Eğer pozisyon zaten cooldown'da ise, bu kontrolü atla
+            if symbol in stop_cooldown:
+                print(f"⚠️ {symbol} → Zaten cooldown'da, pozisyon kontrolü atlanıyor")
+                continue
             
             if signal_type == "LONG" or signal_type == "ALIS":
                 min_target_diff = target_price * 0.001 
@@ -2916,12 +2942,12 @@ async def signal_processing_loop():
         print("🔄 Bot başlangıcında mevcut durumlar kontrol ediliyor...")
         await check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown)
         
-        # Global stop_cooldown değişkenini güncelle
-        global_stop_cooldown = stop_cooldown.copy()
-        
         # Bot başlangıcında eski sinyal cooldown'ları temizle
         print("🧹 Bot başlangıcında eski sinyal cooldown'ları temizleniyor...")
         await clear_cooldown_status()
+        
+        # Global stop_cooldown değişkenini güncelle
+        global_stop_cooldown = stop_cooldown.copy()
     
     # Periyodik pozisyon kontrolü için sayaç
     position_check_counter = 0
@@ -2942,7 +2968,16 @@ async def signal_processing_loop():
             position_check_counter += 1
             if position_check_counter >= 30:
                 print("🔄 Periyodik pozisyon kontrolü yapılıyor...")
-                await check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown)
+                # GÜVENLİK KONTROLÜ: Sadece aktif pozisyonları kontrol et
+                if positions:  # Sadece pozisyon varsa kontrol et
+                    # Cooldown'daki pozisyonları filtrele
+                    active_positions = {k: v for k, v in positions.items() if k not in stop_cooldown}
+                    if active_positions:  # Sadece aktif pozisyon varsa kontrol et
+                        await check_existing_positions_and_cooldowns(active_positions, active_signals, stats, stop_cooldown)
+                    else:
+                        print("ℹ️ Tüm pozisyonlar cooldown'da, pozisyon kontrolü atlanıyor")
+                else:
+                    print("ℹ️ Aktif pozisyon yok, periyodik kontrol atlanıyor")
                 position_check_counter = 0
                 
                 # Global stop_cooldown değişkenini güncelle
@@ -3531,7 +3566,8 @@ async def signal_processing_loop():
             stats["active_signals_count"] = len(active_signals)
             stats["tracked_coins_count"] = len(tracked_coins)
             
-            # Global değişkenleri güncelle (bot komutları için)
+                    # Global değişkenleri güncelle (bot komutları için)
+            global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_positions, global_stop_cooldown, global_allowed_users, global_admin_users
             global_stats = stats.copy()
             global_active_signals = active_signals.copy()
             global_successful_signals = successful_signals.copy()
@@ -3627,8 +3663,8 @@ async def signal_processing_loop():
 async def monitor_signals():
     print("🚀 Sinyal izleme sistemi başlatıldı! (Veri Karışıklığı Düzeltildi)")
     
-    # Global active_signals değişkenini kullan
-    global active_signals
+    # Global değişkenleri kullan
+    global active_signals, global_stop_cooldown
     
     while True:
         try:
@@ -3672,6 +3708,12 @@ async def monitor_signals():
             if not active_signals:
                 await asyncio.sleep(CONFIG["MONITOR_SLEEP_EMPTY"]) 
                 continue
+
+            # Global stop_cooldown değişkenini güncelle
+            try:
+                global_stop_cooldown = load_stop_cooldown_from_db()
+            except Exception as e:
+                print(f"⚠️ Global stop_cooldown güncellenirken hata: {e}")
 
             print(f"🔍 {len(active_signals)} aktif sinyal izleniyor...")
             print(f"🚨 MONITOR DEBUG: Bu fonksiyon çalışıyor!")
@@ -3753,6 +3795,24 @@ async def monitor_signals():
                             print(f"❌ {symbol} active_signal belgesi silinirken hata: {e}")
                         
                         del active_signals[symbol]
+                        continue
+                    
+                    # GÜVENLİK KONTROLÜ: Pozisyon zaten kapatılmış mı kontrol et
+                    if symbol in global_stop_cooldown:
+                        print(f"⚠️ {symbol} → Zaten cooldown'da, izleme atlanıyor")
+                        # Active signal dokümanını da temizle
+                        try:
+                            mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                            print(f"✅ {symbol} active_signal belgesi cooldown nedeniyle temizlendi")
+                        except Exception as e:
+                            print(f"❌ {symbol} active_signal belgesi temizlenirken hata: {e}")
+                        
+                        del active_signals[symbol]
+                        continue
+                    
+                    # EK GÜVENLİK KONTROLÜ: Pozisyon durumunu kontrol et
+                    if signal.get('status') == 'closing':
+                        print(f"⚠️ {symbol} → Pozisyon zaten kapatılıyor, izleme atlanıyor")
                         continue
                     
                     if not mongo_collection.find_one({"_id": f"active_signal_{symbol}"}):
@@ -4272,8 +4332,8 @@ def save_stop_cooldown_to_db(stop_cooldown):
         return False
 
 async def close_position(symbol, trigger_type, final_price, signal, position_data=None):
-    # Global active_signals değişkenini kullan
-    global active_signals
+    # Global değişkenleri kullan
+    global active_signals, global_stop_cooldown
     
     print(f"--- Pozisyon Kapatılıyor: {symbol} ({trigger_type}) ---")
     try:
@@ -4289,6 +4349,22 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
         position_doc = mongo_collection.find_one({"_id": f"position_{symbol}"})
         if not position_doc:
             print(f"⚠️ {symbol} pozisyonu zaten kapatılmış veya DB'de bulunamadı. Yinelenen işlem engellendi.")
+            # Bellekteki global değişkenlerden de temizle
+            global_positions.pop(symbol, None)
+            global_active_signals.pop(symbol, None)
+            return
+        
+        # EK GÜVENLİK KONTROLÜ: Pozisyon zaten kapatılıyor mu kontrol et
+        if position_doc.get('status') == 'closing':
+            print(f"⚠️ {symbol} pozisyonu zaten kapatılıyor, yinelenen işlem engellendi.")
+            return
+        
+        # GÜVENLİK KONTROLÜ: Active signal dokümanını da kontrol et
+        active_signal_doc = mongo_collection.find_one({"_id": f"active_signal_{symbol}"})
+        if not active_signal_doc:
+            print(f"⚠️ {symbol} active signal dokümanı bulunamadı. Pozisyon zaten kapatılmış.")
+            # Pozisyon dokümanını da temizle
+            mongo_collection.delete_one({"_id": f"position_{symbol}"})
             # Bellekteki global değişkenlerden de temizle
             global_positions.pop(symbol, None)
             global_active_signals.pop(symbol, None)
@@ -4513,7 +4589,6 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 print(f"❌ {symbol} veritabanından ikinci denemede de silinemedi: {e2}")
         
         # Cooldown'a ekle (4 saat)
-        global global_stop_cooldown
         global_stop_cooldown[symbol] = datetime.now()
         
         # Cooldown'ı veritabanına kaydet

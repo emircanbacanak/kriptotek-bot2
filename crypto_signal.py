@@ -2303,7 +2303,6 @@ async def get_active_high_volume_usdt_pairs(top_n=50, stop_cooldown=None):
         
         # COOLDOWN KONTROLÜ: Eğer stop_cooldown verilmişse, cooldown'daki sembolleri filtrele
         if stop_cooldown and check_cooldown(symbol, stop_cooldown, 4):
-            print(f"⏰ {symbol} → Cooldown'da olduğu için sinyal arama listesine eklenmedi")
             idx += 1
             continue
             
@@ -4126,11 +4125,6 @@ def check_cooldown(symbol, cooldown_dict, hours=4):  # ✅ 4 SAAT COOLDOWN - TÜ
             last_time = datetime.fromisoformat(last_time)
         time_diff = (datetime.now() - last_time).total_seconds() / 3600
         if time_diff < hours:
-            remaining_hours = hours - time_diff
-            remaining_minutes = (remaining_hours - int(remaining_hours)) * 60
-            end_time = (last_time + timedelta(hours=hours)).strftime('%H:%M:%S')
-            print(f"⏰ {symbol} → Cooldown aktif: {int(remaining_hours)}s {int(remaining_minutes)}dk kaldı (bitiş: {end_time})")
-            print(f"   Son hedef zamanı: {last_time.strftime('%H:%M:%S')}")
             return True  # Cooldown aktif
         else:
             del cooldown_dict[symbol]  # Cooldown doldu

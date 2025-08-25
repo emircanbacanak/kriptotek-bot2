@@ -3646,14 +3646,23 @@ async def monitor_signals():
                     orphaned_signals.append(symbol)
                     del active_signals[symbol]
             
-            # Orphaned sinyalleri veritabanından da sil
+            # Orphaned sinyalleri veritabanından da sil - HATA DURUMUNDA TEKRAR DENE
             if orphaned_signals:
                 for symbol in orphaned_signals:
                     try:
-                        mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
-                        print(f"✅ {symbol} aktif sinyali veritabanından silindi")
+                        delete_result = mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                        if delete_result.deleted_count > 0:
+                            print(f"✅ {symbol} aktif sinyali veritabanından silindi")
+                        else:
+                            print(f"⚠️ {symbol} aktif sinyali zaten silinmiş veya bulunamadı")
                     except Exception as e:
                         print(f"❌ {symbol} aktif sinyali silinirken hata: {e}")
+                        # Hata durumunda tekrar dene
+                        try:
+                            mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                            print(f"✅ {symbol} aktif sinyali ikinci denemede silindi")
+                        except Exception as e2:
+                            print(f"❌ {symbol} aktif sinyali ikinci denemede de silinemedi: {e2}")
                 
                 # Güncellenmiş aktif sinyalleri kaydet
                 save_active_signals_to_db(active_signals)
@@ -3732,6 +3741,20 @@ async def monitor_signals():
             
             for symbol, signal in list(active_signals.items()):
                 try:
+                    # Ek güvenlik kontrolü: Pozisyon belgesi var mı?
+                    position_doc = mongo_collection.find_one({"_id": f"position_{symbol}"})
+                    if not position_doc:
+                        print(f"⚠️ {symbol} → Position belgesi yok, aktif sinyallerden kaldırılıyor")
+                        # Veritabanından da sil
+                        try:
+                            mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                            print(f"✅ {symbol} active_signal belgesi veritabanından silindi")
+                        except Exception as e:
+                            print(f"❌ {symbol} active_signal belgesi silinirken hata: {e}")
+                        
+                        del active_signals[symbol]
+                        continue
+                    
                     if not mongo_collection.find_one({"_id": f"active_signal_{symbol}"}):
                         print(f"ℹ️ {symbol} sinyali DB'de bulunamadı, bellekten kaldırılıyor.")
                         del active_signals[symbol]
@@ -3813,7 +3836,7 @@ async def monitor_signals():
                                 continue
                             
                             await close_position(symbol, trigger_type_realtime, final_price_realtime, signal, position_data)
-                            active_signals.pop(symbol, None) # Bellekten de sil
+                            # close_position zaten active_signals'dan kaldırıyor, burada tekrar yapmaya gerek yok
                             continue # Bu sembol bitti, sonraki sinyale geç.
                             
                     except Exception as e:
@@ -3855,7 +3878,7 @@ async def monitor_signals():
                             continue
                         
                         await close_position(symbol, trigger_type, final_price, signal, position_data)
-                        del active_signals[symbol]
+                        # close_position zaten active_signals'dan kaldırıyor, burada tekrar yapmaya gerek yok
                         
                         print(f"✅ {symbol} izleme listesinden kaldırıldı. Bir sonraki sinyale geçiliyor.")
                         continue # Bir sonraki sinyale geç
@@ -4463,9 +4486,31 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             # STOP mesajları sadece bot sahibine gidecek
             await send_admin_message(message)
         
-        # Pozisyonu veritabanından sil
-        mongo_collection.delete_one({"_id": f"position_{symbol}"})
-        mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+        # Pozisyonu veritabanından sil - HATA DURUMUNDA TEKRAR DENE
+        try:
+            # Önce active_signal belgesini sil
+            delete_result = mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+            if delete_result.deleted_count > 0:
+                print(f"✅ {symbol} active_signal belgesi veritabanından silindi")
+            else:
+                print(f"⚠️ {symbol} active_signal belgesi zaten silinmiş veya bulunamadı")
+            
+            # Sonra position belgesini sil
+            delete_result = mongo_collection.delete_one({"_id": f"position_{symbol}"})
+            if delete_result.deleted_count > 0:
+                print(f"✅ {symbol} position belgesi veritabanından silindi")
+            else:
+                print(f"⚠️ {symbol} position belgesi zaten silinmiş veya bulunamadı")
+                
+        except Exception as e:
+            print(f"❌ {symbol} veritabanından silinirken hata: {e}")
+            # Hata durumunda tekrar dene
+            try:
+                mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                mongo_collection.delete_one({"_id": f"position_{symbol}"})
+                print(f"✅ {symbol} veritabanından ikinci denemede silindi")
+            except Exception as e2:
+                print(f"❌ {symbol} veritabanından ikinci denemede de silinemedi: {e2}")
         
         # Cooldown'a ekle (4 saat)
         global global_stop_cooldown
@@ -4477,6 +4522,11 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
         # Bellekteki global değişkenlerden de temizle
         global_positions.pop(symbol, None)
         global_active_signals.pop(symbol, None)
+        
+        # Ek güvenlik: active_signals listesinden de kaldır
+        if symbol in active_signals:
+            del active_signals[symbol]
+            print(f"✅ {symbol} active_signals listesinden kaldırıldı")
         
         print(f"✅ {symbol} pozisyonu başarıyla kapatıldı ve 4 saat cooldown'a eklendi")
         

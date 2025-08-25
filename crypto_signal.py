@@ -3552,26 +3552,51 @@ async def signal_processing_loop():
             save_active_signals_to_db(active_signals)
             save_positions_to_db(positions)  # ✅ POZİSYONLARI DA KAYDET
 
-            # İstatistik özeti yazdır
+            # İstatistik özeti yazdır - veritabanından güncel verileri al
             print(f"📊 İSTATİSTİK ÖZETİ:")
-            total_display = stats.get('successful_signals', 0) + stats.get('failed_signals', 0) + stats.get('active_signals_count', 0)
-            print(f"   Toplam Sinyal: {total_display}")
-            print(f"   Başarılı: {stats['successful_signals']}")
-            print(f"   Başarısız: {stats['failed_signals']}")
-            print(f"   Aktif Sinyal: {stats['active_signals_count']}")
-            print(f"   100$ Yatırım Toplam Kar/Zarar: ${stats['total_profit_loss']:.2f}")
-            # Sadece kapanmış işlemler için ortalama kar/zarar
-            closed_count = stats['successful_signals'] + stats['failed_signals']
-            closed_pl = 0.0
-            for s in successful_signals.values():
-                closed_pl += s.get('profit_usd', 0)
-            for f in failed_signals.values():
-                closed_pl += f.get('loss_usd', 0)
+            
+            # Veritabanından güncel istatistikleri yükle
+            db_stats = load_stats_from_db()
+            if db_stats:
+                stats = db_stats
+            
+            # Güncel aktif sinyal sayısını al (veritabanından)
+            try:
+                # Veritabanından aktif sinyal sayısını al
+                active_signals_docs = mongo_collection.count_documents({"_id": {"$regex": "^active_signal_"}})
+                current_active_count = active_signals_docs
+            except:
+                # Hata durumunda yerel değişkenden al
+                current_active_count = len(active_signals)
+            
+            # Toplam sinyal sayısını hesapla
+            total_signals = stats.get('successful_signals', 0) + stats.get('failed_signals', 0) + current_active_count
+            
+            print(f"   Toplam Sinyal: {total_signals}")
+            print(f"   Başarılı: {stats.get('successful_signals', 0)}")
+            print(f"   Başarısız: {stats.get('failed_signals', 0)}")
+            print(f"   Aktif Sinyal: {current_active_count}")
+            print(f"   100$ Yatırım Toplam Kar/Zarar: ${stats.get('total_profit_loss', 0):.2f}")
+            
+            # Başarı oranını hesapla
+            closed_count = stats.get('successful_signals', 0) + stats.get('failed_signals', 0)
             if closed_count > 0:
-                success_rate = (stats['successful_signals'] / closed_count) * 100
+                success_rate = (stats.get('successful_signals', 0) / closed_count) * 100
                 print(f"   Başarı Oranı: %{success_rate:.1f}")
             else:
                 print(f"   Başarı Oranı: %0.0")
+            
+            # Debug bilgisi ekle
+            print(f"   🔍 Debug: DB Stats = {db_stats}")
+            print(f"   🔍 Debug: Active Signals Count = {current_active_count}")
+            print(f"   🔍 Debug: Positions Count = {len(positions)}")
+            
+            # Veritabanından pozisyon sayısını da al
+            try:
+                positions_docs = mongo_collection.count_documents({"_id": {"$regex": "^position_"}})
+                print(f"   🔍 Debug: DB Positions Count = {positions_docs}")
+            except:
+                print(f"   🔍 Debug: DB Positions Count = Hata")
             
             # Yeni sinyal aramaya devam et
             print("🚀 Yeni sinyal aramaya devam ediliyor...")

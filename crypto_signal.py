@@ -278,6 +278,9 @@ def update_stats_atomic(updates):
         return False
 
 def update_position_status_atomic(symbol, status, additional_data=None):
+    # Global active_signals değişkenini kullan
+    global active_signals
+    
     try:
         if mongo_collection is None:
             if not connect_mongodb():
@@ -334,9 +337,15 @@ def update_position_status_atomic(symbol, status, additional_data=None):
         # insert_one için upserted_id, update_one için modified_count kontrol et
         if hasattr(result, 'modified_count') and result.modified_count > 0:
             print(f"✅ {symbol} pozisyon durumu güncellendi: {status}")
+            # Bellekteki durumu da güncelle
+            if symbol in active_signals:
+                active_signals[symbol]['status'] = status
             return True
         elif hasattr(result, 'upserted_id') and result.upserted_id:
             print(f"✅ {symbol} pozisyon durumu oluşturuldu: {status}")
+            # Bellekteki durumu da güncelle
+            if symbol in active_signals:
+                active_signals[symbol]['status'] = status
             return True
         else:
             print(f"⚠️ {symbol} pozisyon durumu güncellenemedi: {status} (Result: {result})")
@@ -1148,6 +1157,7 @@ global_stop_cooldown = {}
 global_allowed_users = set() 
 global_admin_users = set() 
 global_last_signal_scan_time = None
+active_signals = {}  # Global active_signals değişkeni
 
 def is_authorized_chat(update):
     """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
@@ -2785,7 +2795,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
     # Global değişkenleri tanımla
-    global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_allowed_users, global_admin_users, global_positions, global_stop_cooldown
+    global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_allowed_users, global_admin_users, global_positions, global_stop_cooldown, active_signals
 
     positions = dict()  # {symbol: position_info}
     stop_cooldown = dict()  # {symbol: datetime}
@@ -3553,6 +3563,9 @@ async def signal_processing_loop():
 async def monitor_signals():
     print("🚀 Sinyal izleme sistemi başlatıldı! (Veri Karışıklığı Düzeltildi)")
     
+    # Global active_signals değişkenini kullan
+    global active_signals
+    
     while True:
         try:
             active_signals = load_active_signals_from_db()
@@ -3721,6 +3734,12 @@ async def monitor_signals():
                         # 4. POZİSYON KAPATMA İŞLEMİ
                         if is_triggered_realtime:
                             print(f"💥 ANLIK TETİKLENDİ: {symbol}, Tip: {trigger_type_realtime}, Fiyat: {final_price_realtime}")
+                            
+                            # Pozisyon zaten kapatılıyor mu kontrol et
+                            if symbol in active_signals and active_signals[symbol].get('status') == 'closing':
+                                print(f"⚠️ {symbol} - Pozisyon zaten kapatılıyor, anlık tetikleme atlanıyor")
+                                continue
+                            
                             update_position_status_atomic(symbol, "closing", {"trigger_type": trigger_type_realtime, "final_price": final_price_realtime})
                             
                             position_data = load_position_from_db(symbol)
@@ -3758,6 +3777,12 @@ async def monitor_signals():
                     
                     if is_triggered:
                         print(f"💥 MUM TETİKLEDİ: {symbol}, Tip: {trigger_type}, Fiyat: {final_price}")
+                        
+                        # Pozisyon zaten kapatılıyor mu kontrol et
+                        if symbol in active_signals and active_signals[symbol].get('status') == 'closing':
+                            print(f"⚠️ {symbol} - Pozisyon zaten kapatılıyor, mum tetikleme atlanıyor")
+                            continue
+                        
                         update_position_status_atomic(symbol, "closing", {"trigger_type": trigger_type, "final_price": final_price})
                         position_data = load_position_from_db(symbol)
 
@@ -4173,8 +4198,20 @@ def save_stop_cooldown_to_db(stop_cooldown):
         return False
 
 async def close_position(symbol, trigger_type, final_price, signal, position_data=None):
+    # Global active_signals değişkenini kullan
+    global active_signals
+    
     print(f"--- Pozisyon Kapatılıyor: {symbol} ({trigger_type}) ---")
     try:
+        # Pozisyon zaten kapatılıyor mu kontrol et
+        if symbol in active_signals and active_signals[symbol].get('status') == 'closing':
+            print(f"⚠️ {symbol} - Pozisyon zaten kapatılıyor, yinelenen işlem engellendi")
+            return
+        
+        # Pozisyon durumunu 'closing' olarak işaretle
+        if symbol in active_signals:
+            active_signals[symbol]['status'] = 'closing'
+        
         # Önce veritabanından pozisyonun hala var olduğunu doğrula
         position_doc = mongo_collection.find_one({"_id": f"position_{symbol}"})
         if not position_doc:

@@ -340,12 +340,18 @@ def update_position_status_atomic(symbol, status, additional_data=None):
             # Bellekteki durumu da güncelle
             if symbol in active_signals:
                 active_signals[symbol]['status'] = status
+                # Eğer additional_data'da trigger_type varsa onu da ekle
+                if additional_data and 'trigger_type' in additional_data:
+                    active_signals[symbol]['trigger_type'] = additional_data['trigger_type']
             return True
         elif hasattr(result, 'upserted_id') and result.upserted_id:
             print(f"✅ {symbol} pozisyon durumu oluşturuldu: {status}")
             # Bellekteki durumu da güncelle
             if symbol in active_signals:
                 active_signals[symbol]['status'] = status
+                # Eğer additional_data'da trigger_type varsa onu da ekle
+                if additional_data and 'trigger_type' in additional_data:
+                    active_signals[symbol]['trigger_type'] = additional_data['trigger_type']
             return True
         else:
             print(f"⚠️ {symbol} pozisyon durumu güncellenemedi: {status} (Result: {result})")
@@ -391,6 +397,7 @@ def save_active_signals_to_db(active_signals):
                 "current_price_float": signal["current_price_float"],
                 "last_update": signal["last_update"],
                 "status": signal.get("status", "active"),  # Mevcut durumu kullan, yoksa "active"
+                "trigger_type": signal.get("trigger_type", None),  # Trigger type bilgisini ekle
                 "saved_at": str(datetime.now())
             }
             
@@ -440,7 +447,8 @@ def load_active_signals_from_db():
                 "current_price": doc.get("current_price", "0"),
                 "current_price_float": doc.get("current_price_float", 0.0),
                 "last_update": doc.get("last_update", ""),
-                "status": doc.get("status", "active")  # Varsayılan durum "active"
+                "status": doc.get("status", "active"),  # Varsayılan durum "active"
+                "trigger_type": doc.get("trigger_type", None)  # Trigger type bilgisini yükle
             }
         return result
     except Exception as e:
@@ -3773,10 +3781,8 @@ async def monitor_signals():
                         if is_triggered_realtime:
                             print(f"💥 ANLIK TETİKLENDİ: {symbol}, Tip: {trigger_type_realtime}, Fiyat: {final_price_realtime}")
                             
-                            # Pozisyon zaten kapatılıyor mu kontrol et
-                            if symbol in active_signals and active_signals[symbol].get('status') == 'closing':
-                                print(f"⚠️ {symbol} - Pozisyon zaten kapatılıyor, anlık tetikleme atlanıyor")
-                                continue
+                            # Pozisyon durumu kontrolü kaldırıldı - her tetikleme işlenmeli
+                            print(f"🔄 {symbol} - Anlık tetikleme işleniyor...")
                             
                             update_position_status_atomic(symbol, "closing", {"trigger_type": trigger_type_realtime, "final_price": final_price_realtime})
                             
@@ -3816,10 +3822,8 @@ async def monitor_signals():
                     if is_triggered:
                         print(f"💥 MUM TETİKLEDİ: {symbol}, Tip: {trigger_type}, Fiyat: {final_price}")
                         
-                        # Pozisyon zaten kapatılıyor mu kontrol et
-                        if symbol in active_signals and active_signals[symbol].get('status') == 'closing':
-                            print(f"⚠️ {symbol} - Pozisyon zaten kapatılıyor, mum tetikleme atlanıyor")
-                            continue
+                        # Pozisyon durumu kontrolü kaldırıldı - her tetikleme işlenmeli
+                        print(f"🔄 {symbol} - Mum tetikleme işleniyor...")
                         
                         update_position_status_atomic(symbol, "closing", {"trigger_type": trigger_type, "final_price": final_price})
                         position_data = load_position_from_db(symbol)
@@ -4241,14 +4245,13 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
     
     print(f"--- Pozisyon Kapatılıyor: {symbol} ({trigger_type}) ---")
     try:
-        # Pozisyon zaten kapatılıyor mu kontrol et
-        if symbol in active_signals and active_signals[symbol].get('status') == 'closing':
-            print(f"⚠️ {symbol} - Pozisyon zaten kapatılıyor, yinelenen işlem engellendi")
-            return
+        # Pozisyon durumu kontrolü kaldırıldı - her tetikleme işlenmeli
+        print(f"🔄 {symbol} - {trigger_type} işleniyor...")
         
-        # Pozisyon durumunu 'closing' olarak işaretle
+        # Pozisyon durumunu 'closing' olarak işaretle ve trigger_type'ı kaydet
         if symbol in active_signals:
             active_signals[symbol]['status'] = 'closing'
+            active_signals[symbol]['trigger_type'] = trigger_type
         
         # Önce veritabanından pozisyonun hala var olduğunu doğrula
         position_doc = mongo_collection.find_one({"_id": f"position_{symbol}"})

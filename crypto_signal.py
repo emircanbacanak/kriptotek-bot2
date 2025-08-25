@@ -2926,7 +2926,10 @@ async def signal_processing_loop():
     
     # Periyodik pozisyon kontrolü için sayaç
     position_check_counter = 0
-    
+
+    # Race condition önleme için pozisyon işlem flag'leri
+    position_processing_flags = {}  # {symbol: timestamp} - pozisyon işlenirken set edilir
+
     while True:
         try:
             if not ensure_mongodb_connection():
@@ -3201,26 +3204,25 @@ async def signal_processing_loop():
                 print("🚀 Yeni sinyal aramaya devam ediliyor...")
                 signal_processing_loop._first_loop = False
         
-            # Aktif sinyallerin fiyatlarını güncelle ve hedef/stop kontrolü yap
-            if active_signals:
-                # Sadece ilk kez mesaj yazdır
-                if not hasattr(signal_processing_loop, '_first_active_check'):
-                    print(f"🔍 AKTİF SİNYAL KONTROLÜ BAŞLATILIYOR... ({len(active_signals)} aktif sinyal)")
-                    for symbol in list(active_signals.keys()):
-                        print(f"   📊 {symbol}: {active_signals[symbol].get('type', 'N/A')} - Giriş: ${active_signals[symbol].get('entry_price_float', 0):.6f}")
-                    signal_processing_loop._first_active_check = False
-            else:
-                # Sadece ilk kez mesaj yazdır
-                if not hasattr(signal_processing_loop, '_first_no_active'):
-                    print("ℹ️ Aktif sinyal yok, kontrol atlanıyor")
-                    signal_processing_loop._first_no_active = False
-                continue
+            # AKTİF SİNYAL KONTROLÜ KALDIRILDI - monitor_signals() fonksiyonu bu işi yapıyor
+            # Aktif sinyal kontrolü kaldırıldı - monitor_signals() fonksiyonu bu işi yapıyor
             
             for symbol in list(active_signals.keys()):
                 if symbol not in positions:  # Pozisyon kapandıysa aktif sinyalden kaldır
                     del active_signals[symbol]
                     continue
-                
+
+                # Race condition kontrolü: Monitor_signals bu pozisyonu işliyorsa atla
+                current_time = datetime.now()
+                if symbol in position_processing_flags:
+                    flag_time = position_processing_flags[symbol]
+                    # 30 saniye içinde işlenmişse atla
+                    if isinstance(flag_time, datetime) and (current_time - flag_time).seconds < 30:
+                        continue
+                    else:
+                        # Eski flag'i temizle
+                        del position_processing_flags[symbol]
+
                 try:
                     # Sadece ilk kez mesaj yazdır
                     attr_name = f'_first_active_check_{symbol}'
@@ -3306,11 +3308,14 @@ async def signal_processing_loop():
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
                             
+                            # İşlem flag'i set et (race condition önleme)
+                            position_processing_flags[symbol] = datetime.now()
+
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
                             del active_signals[symbol]
-                            
+
                             # Global değişkenleri hemen güncelle (hızlı kontrol için)
                             global_active_signals = active_signals.copy()
                             global_positions = positions.copy()
@@ -3318,9 +3323,9 @@ async def signal_processing_loop():
                             global_stop_cooldown = stop_cooldown.copy()
                             global_successful_signals = successful_signals.copy()
                             global_failed_signals = failed_signals.copy()
-                            
+
                             # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
-                            print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
+                            print(f"📢 {symbol} hedefe ulaştı - monitor_signals() mesaj gönderecek")
                             
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi? (LONG: aşağı düşmesi zarar)
                         # GÜVENLİK KONTROLÜ: Fiyat gerçekten stop'u geçti mi?
@@ -3363,18 +3368,21 @@ async def signal_processing_loop():
                             
                             # Sinyal cooldown'a da ekle (30 dakika)
                             await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
-                            
+
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
-                            
+
+                            # İşlem flag'i set et (race condition önleme)
+                            position_processing_flags[symbol] = datetime.now()
+
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
                             del active_signals[symbol]
-                            
+
                             # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
-                            print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
-                    
+                            print(f"📢 {symbol} stop oldu - monitor_signals() mesaj gönderecek")
+
                     # SHORT sinyali için hedef/stop kontrolü
                     elif signal_type == "SATIŞ" or signal_type == "SATIS":
                         # Sadece ilk kez mesaj yazdır
@@ -3422,12 +3430,15 @@ async def signal_processing_loop():
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
-                            
+
+                            # İşlem flag'i set et (race condition önleme)
+                            position_processing_flags[symbol] = datetime.now()
+
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
                             del active_signals[symbol]
-                            
+
                             # Global değişkenleri hemen güncelle (hızlı kontrol için)
                             global_active_signals = active_signals.copy()
                             global_positions = positions.copy()
@@ -3436,7 +3447,7 @@ async def signal_processing_loop():
                             global_successful_signals = successful_signals.copy()
                             global_failed_signals = failed_signals.copy()
 
-                            print(f"📢 Hedef mesajı monitor_signals() tarafından gönderilecek")
+                            print(f"📢 {symbol} hedefe ulaştı - monitor_signals() mesaj gönderecek")
                             
                         # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SHORT: yukarı çıkması zarar)
                         # GÜVENLİK KONTROLÜ: Fiyat gerçekten stop'u geçti mi?
@@ -3482,14 +3493,17 @@ async def signal_processing_loop():
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
-                            
+
+                            # İşlem flag'i set et (race condition önleme)
+                            position_processing_flags[symbol] = datetime.now()
+
                             # Pozisyonu ve aktif sinyali kaldır
                             if symbol in positions:
                                 del positions[symbol]
                             del active_signals[symbol]
-                            
+
                             # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
-                            print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
+                            print(f"📢 {symbol} stop oldu - monitor_signals() mesaj gönderecek")
                     
                 except Exception as e:
                     print(f"Aktif sinyal güncelleme hatası: {symbol} - {str(e)}")
@@ -3627,9 +3641,9 @@ async def signal_processing_loop():
 
 async def monitor_signals():
     print("🚀 Sinyal izleme sistemi başlatıldı! (Veri Karışıklığı Düzeltildi)")
-    
+
     # Global active_signals değişkenini kullan
-    global active_signals
+    global active_signals, position_processing_flags
     
     while True:
         try:
@@ -3835,7 +3849,15 @@ async def monitor_signals():
                             else:
                                 print(f"❌ {symbol} pozisyon verisi yüklenemedi!")
                                 continue
-                            
+
+                            # Race condition kontrolü: signal_processing_loop bu pozisyonu işliyorsa atla
+                            current_time = datetime.now()
+                            if symbol in position_processing_flags:
+                                flag_time = position_processing_flags[symbol]
+                                if isinstance(flag_time, datetime) and (current_time - flag_time).seconds < 30:
+                                    print(f"⏳ {symbol} signal_processing_loop tarafından işleniyor, bekleniyor...")
+                                    continue
+
                             await close_position(symbol, trigger_type_realtime, final_price_realtime, signal, position_data)
                             # close_position zaten active_signals'dan kaldırıyor, burada tekrar yapmaya gerek yok
                             continue # Bu sembol bitti, sonraki sinyale geç.
@@ -3877,7 +3899,15 @@ async def monitor_signals():
                         else:
                             print(f"❌ {symbol} pozisyon verisi yüklenemedi!")
                             continue
-                        
+
+                        # Race condition kontrolü: signal_processing_loop bu pozisyonu işliyorsa atla
+                        current_time = datetime.now()
+                        if symbol in position_processing_flags:
+                            flag_time = position_processing_flags[symbol]
+                            if isinstance(flag_time, datetime) and (current_time - flag_time).seconds < 30:
+                                print(f"⏳ {symbol} signal_processing_loop tarafından işleniyor, bekleniyor...")
+                                continue
+
                         await close_position(symbol, trigger_type, final_price, signal, position_data)
                         # close_position zaten active_signals'dan kaldırıyor, burada tekrar yapmaya gerek yok
                         
@@ -4274,7 +4304,10 @@ def save_stop_cooldown_to_db(stop_cooldown):
 
 async def close_position(symbol, trigger_type, final_price, signal, position_data=None):
     # Global active_signals değişkenini kullan
-    global active_signals
+    global active_signals, position_processing_flags
+
+    # İşlem flag'i set et (race condition önleme)
+    position_processing_flags[symbol] = datetime.now()
     
     print(f"--- Pozisyon Kapatılıyor: {symbol} ({trigger_type}) ---")
     try:

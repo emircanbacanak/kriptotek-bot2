@@ -950,9 +950,7 @@ def load_positions_from_db():
                 continue
             
             positions[symbol] = position_data
-            print(f"✅ {symbol} pozisyonu yüklendi ve doğrulandı")
         
-        print(f"📊 MongoDB'den {len(positions)} geçerli pozisyon yüklendi")
         return positions
     except Exception as e:
         print(f"❌ MongoDB'den pozisyonlar yüklenirken hata: {e}")
@@ -2359,12 +2357,8 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         buy_count, sell_count = calculate_signal_counts(current_signals, tf_names)
         
         # 7/7 kuralı kontrol - sadece bu kural geçerli
-        print(f"🔍 {symbol} → Sinyal analizi: LONG={buy_count}, SHORT={sell_count}")
         
         if not check_7_7_rule(buy_count, sell_count):
-            if buy_count > 0 or sell_count > 0:
-                print(f"❌ {symbol} → 7/7 kuralı sağlanmadı: LONG={buy_count}, SHORT={sell_count} (7/7 olmalı!)")
-                print(f"   Detay: {current_signals}")
             previous_signals[symbol] = current_signals.copy()
             return None
         
@@ -3725,18 +3719,14 @@ async def monitor_signals():
                         if signal_type == "ALIŞ" or signal_type == "ALIS" or signal_type == "LONG":
                             if change_percent >= 0:
                                 print(f"   🟢 {symbol} (Long): Giriş: ${symbol_entry_price:.6f} → Güncel: ${current_price:.6f} (+{change_percent:.2f}%)")
-                                print(f"      💰 {leverage}x Kaldıraç: ${profit_loss_usd:.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
                             else:
                                 print(f"   🔴 {symbol} (Long): Giriş: ${symbol_entry_price:.6f} → Güncel: ${current_price:.6f} ({change_percent:.2f}%)")
-                                print(f"      💸 {leverage}x Kaldıraç: ${profit_loss_usd:.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
                             
                         else:  # SHORT veya SATIŞ veya SATIS
                             if change_percent >= 0:
                                 print(f"   🟢 {symbol} (SHORT): Giriş: ${symbol_entry_price:.6f} → Güncel: ${current_price:.6f} (+{change_percent:.2f}%)")
-                                print(f"      💰 {leverage}x Kaldıraç: ${profit_loss_usd:.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
                             else:
                                 print(f"   🔴 {symbol} (SHORT): Giriş: ${symbol_entry_price:.6f} → Güncel: ${current_price:.6f} ({change_percent:.2f}%)")
-                                print(f"      💸 {leverage}x Kaldıraç: ${profit_loss_usd:.2f} | 📈 Hedefe: {target_distance:.2f}% | 🛑 Stop'a: {stop_distance:.2f}%")
                         
                 except Exception as e:
                     print(f"   ⚪ {symbol}: Durum hesaplanamadı - Hata: {e}")

@@ -2370,15 +2370,21 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         print(f"   Detay: {current_signals}")
         
         # Sinyal türünü belirle (6/7 veya 7/7 kuralında sadece tek tip sinyal olmalı)
+        print(f"🔍 {symbol} → Sinyal türü belirleme: LONG={buy_count}, SHORT={sell_count}, Required={required_signals}")
+        
         if buy_count == required_signals and sell_count == 0:
             sinyal_tipi = 'ALIŞ'
             dominant_signal = "ALIŞ"
+            print(f"✅ {symbol} → ALIŞ sinyali belirlendi")
         elif sell_count == required_signals and buy_count == 0:
             sinyal_tipi = 'SATIŞ'
             dominant_signal = "SATIŞ"
+            print(f"✅ {symbol} → SATIŞ sinyali belirlendi")
         else:
             # Bu duruma asla gelmemeli çünkü kural zaten kontrol edildi
-            print(f"❌ {symbol} → Beklenmeyen durum: LONG={buy_count}, SHORT={sell_count}")
+            print(f"❌ {symbol} → Beklenmeyen durum: LONG={buy_count}, SHORT={sell_count}, Required={required_signals}")
+            print(f"   Koşullar: buy_count == required_signals: {buy_count} == {required_signals} = {buy_count == required_signals}")
+            print(f"   Koşullar: sell_count == required_signals: {sell_count} == {required_signals} = {sell_count == required_signals}")
             return None
         
         # 15 dakikalık mum rengi kontrolü - sadece BTC/ETH olmayan kriptolar için

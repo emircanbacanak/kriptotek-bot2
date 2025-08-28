@@ -2355,7 +2355,7 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         if current_signals is None:
             return None
         
-        buy_count, sell_count = calculate_signal_counts(current_signals, tf_names)
+        buy_count, sell_count = calculate_signal_counts(current_signals, tf_names, symbol)
         
         # 7/7 kuralı kontrol - sadece bu kural geçerli
         
@@ -3831,9 +3831,6 @@ async def monitor_signals():
                         min_trigger_diff = 0.001  # %0.1 minimum fark
 
                         if symbol_signal_type == "ALIŞ" or symbol_signal_type == "ALIS" or symbol_signal_type == "LONG":
-                            # LONG pozisyonu için kapanış koşulları
-                            # Debug: Fiyat durumunu yazdır
-                            print(f"🔍 {symbol} LONG Debug: Fiyat=${last_price:.6f}, Hedef=${symbol_target_price:.6f}, Stop=${symbol_stop_loss_price:.6f}")
                             
                             # TP: Fiyat hedefin üstüne çıktığında (LONG için kâr)
                             if last_price >= symbol_target_price:
@@ -3847,8 +3844,6 @@ async def monitor_signals():
                                 trigger_type_realtime = "stop_loss"
                                 final_price_realtime = last_price
                                 print(f"❌ {symbol} - SL tetiklendi (LONG): ${last_price:.6f} <= ${symbol_stop_loss_price:.6f}")
-                            else:
-                                print(f"⏳ {symbol} LONG: TP/SL henüz tetiklenmedi")
                         elif symbol_signal_type == "SATIŞ" or symbol_signal_type == "SATIS" or symbol_signal_type == "SHORT":
                             # SHORT pozisyonu için kapanış koşulları    
                             # TP: Fiyat hedefin altına düştüğünde (SHORT için kâr)
@@ -4189,13 +4184,14 @@ async def calculate_signals_for_symbol(symbol, timeframes, tf_names):
     
     return current_signals
 
-def calculate_signal_counts(signals, tf_names):
+def calculate_signal_counts(signals, tf_names, symbol=None):
     """Sinyal sayılarını hesaplar"""
     signal_values = [signals.get(tf, 0) for tf in tf_names]
     buy_count = sum(1 for s in signal_values if s == 1)
     sell_count = sum(1 for s in signal_values if s == -1)
     
-    print(f"🔍 Sinyal sayımı: {tf_names}")
+    symbol_info = f" ({symbol})" if symbol else ""
+    print(f"🔍 Sinyal sayımı{symbol_info}: {tf_names}")
     print(f"   Sinyal değerleri: {signal_values}")
     print(f"   LONG sayısı: {buy_count}, SHORT sayısı: {sell_count}")
     return buy_count, sell_count

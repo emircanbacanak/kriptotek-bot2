@@ -2496,6 +2496,12 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
     volume_usd = signal_data['volume_usd']
     sinyal_tipi = signal_data['signal_type']
     
+    # ETH için özel debug log
+    if symbol == 'ETHUSDT':
+        print(f"🔍 ETHUSDT → process_selected_signal başladı")
+        print(f"   Price: {price}, Volume: {volume_usd}, Signal Type: {sinyal_tipi}")
+        print(f"   Current signals: {current_signals}")
+    
     # Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa yeni sinyal gönderme
     if symbol in positions:
         print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal gönderilmiyor")
@@ -3237,7 +3243,18 @@ async def signal_processing_loop():
             print(f"✅ En yüksek hacimli {len(top_signals)} sinyal işleniyor...")
             for symbol, signal_result in top_signals:
                 print(f"🚀 {symbol} sinyali işleniyor (Hacim: ${volumes.get(symbol, 0):,.0f})")
-                await process_selected_signal(signal_result, positions, active_signals, stats)
+                
+                # ETH için özel debug log
+                if symbol == 'ETHUSDT':
+                    print(f"🔍 ETHUSDT → process_selected_signal başlatılıyor...")
+                    print(f"   Signal data: {signal_result}")
+                
+                result = await process_selected_signal(signal_result, positions, active_signals, stats)
+                
+                # ETH için özel debug log
+                if symbol == 'ETHUSDT':
+                    print(f"🔍 ETHUSDT → process_selected_signal tamamlandı, sonuç: {result}")
+                
                 processed_signals_in_loop += 1
             
             print(f"✅ Tarama döngüsü tamamlandı. Bu turda {processed_signals_in_loop} yeni sinyal işlendi.")

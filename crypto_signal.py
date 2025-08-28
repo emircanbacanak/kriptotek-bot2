@@ -2380,6 +2380,16 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
             sinyal_tipi = 'SATIŞ'
             dominant_signal = "SATIŞ"
             print(f"✅ {symbol} → SATIŞ sinyali belirlendi")
+        elif buy_count == required_signals and sell_count > 0:
+            # 6/7 kuralında 6 sinyal aynı yönde, 1 farklı olabilir
+            sinyal_tipi = 'ALIŞ'
+            dominant_signal = "ALIŞ"
+            print(f"✅ {symbol} → ALIŞ sinyali belirlendi (6/7 kuralı - 1 farklı sinyal)")
+        elif sell_count == required_signals and buy_count > 0:
+            # 6/7 kuralında 6 sinyal aynı yönde, 1 farklı olabilir
+            sinyal_tipi = 'SATIŞ'
+            dominant_signal = "SATIŞ"
+            print(f"✅ {symbol} → SATIŞ sinyali belirlendi (6/7 kuralı - 1 farklı sinyal)")
         else:
             # Bu duruma asla gelmemeli çünkü kural zaten kontrol edildi
             print(f"❌ {symbol} → Beklenmeyen durum: LONG={buy_count}, SHORT={sell_count}, Required={required_signals}")

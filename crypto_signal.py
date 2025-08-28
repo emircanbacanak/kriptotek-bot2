@@ -2357,24 +2357,27 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         
         buy_count, sell_count = calculate_signal_counts(current_signals, tf_names, symbol)
         
-        # 7/7 kuralı kontrol - sadece bu kural geçerli
+        # BTC ve ETH için 6/7, diğerleri için 7/7 kuralı kontrol
+        is_major_coin = symbol in ['BTCUSDT', 'ETHUSDT']
+        required_signals = 6 if is_major_coin else 7
         
-        if not check_7_7_rule(buy_count, sell_count):
+        if not check_signal_rule(buy_count, sell_count, required_signals, symbol):
             previous_signals[symbol] = current_signals.copy()
             return None
         
-        print(f"✅ {symbol} → 7/7 kuralı sağlandı! LONG={buy_count}, SHORT={sell_count}")
+        rule_text = f"{required_signals}/7" if is_major_coin else "7/7"
+        print(f"✅ {symbol} → {rule_text} kuralı sağlandı! LONG={buy_count}, SHORT={sell_count}")
         print(f"   Detay: {current_signals}")
         
-        # Sinyal türünü belirle (7/7 kuralında sadece tek tip sinyal olmalı)
-        if buy_count == 7 and sell_count == 0:
+        # Sinyal türünü belirle (6/7 veya 7/7 kuralında sadece tek tip sinyal olmalı)
+        if buy_count == required_signals and sell_count == 0:
             sinyal_tipi = 'ALIŞ'
             dominant_signal = "ALIŞ"
-        elif sell_count == 7 and buy_count == 0:
+        elif sell_count == required_signals and buy_count == 0:
             sinyal_tipi = 'SATIŞ'
             dominant_signal = "SATIŞ"
         else:
-            # Bu duruma asla gelmemeli çünkü 7/7 kuralı zaten kontrol edildi
+            # Bu duruma asla gelmemeli çünkü kural zaten kontrol edildi
             print(f"❌ {symbol} → Beklenmeyen durum: LONG={buy_count}, SHORT={sell_count}")
             return None
         
@@ -4200,6 +4203,20 @@ def check_7_7_rule(buy_count, sell_count):
     """7/7 kuralını kontrol eder - tüm 7 zaman dilimi aynı yönde olmalı"""
     result = buy_count == 7 or sell_count == 7
     print(f"🔍 7/7 kural kontrolü: LONG={buy_count}, SHORT={sell_count} → Sonuç: {result}")
+    return result
+
+def check_signal_rule(buy_count, sell_count, required_signals, symbol):
+    """Esnek sinyal kuralını kontrol eder - BTC/ETH için 6/7, diğerleri için 7/7"""
+    is_major_coin = symbol in ['BTCUSDT', 'ETHUSDT']
+    rule_text = f"{required_signals}/7" if is_major_coin else "7/7"
+    
+    result = buy_count == required_signals or sell_count == required_signals
+    
+    if is_major_coin:
+        print(f"🔍 {symbol} {rule_text} kural kontrolü: LONG={buy_count}, SHORT={sell_count} → Sonuç: {result}")
+    else:
+        print(f"🔍 {symbol} {rule_text} kural kontrolü: LONG={buy_count}, SHORT={sell_count} → Sonuç: {result}")
+    
     return result
 
 def check_cooldown(symbol, cooldown_dict, hours=4):

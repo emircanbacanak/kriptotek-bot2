@@ -2381,40 +2381,44 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
             print(f"❌ {symbol} → Beklenmeyen durum: LONG={buy_count}, SHORT={sell_count}")
             return None
         
-        # 15 dakikalık mum rengi kontrolü - sinyal kalitesi için
-        print(f"🔍 {symbol} → 15 dakikalık mum rengi kontrol ediliyor...")
-        try:
-            df_15m = await async_get_historical_data(symbol, '15m', 1)
-            if df_15m is not None and not df_15m.empty:
-                last_candle = df_15m.iloc[-1]
-                open_price = float(last_candle['open'])
-                close_price = float(last_candle['close'])
-                
-                # Mum rengini belirle (yeşil = close > open, kırmızı = close < open)
-                is_green_candle = close_price > open_price
-                is_red_candle = close_price < open_price
-                
-                print(f"🔍 {symbol} → 15m mum: Açılış=${open_price:.6f}, Kapanış=${close_price:.6f}")
-                print(f"🔍 {symbol} → 15m mum rengi: {'🟢 Yeşil' if is_green_candle else '🔴 Kırmızı' if is_red_candle else '⚪ Doğru'}")
-                
-                # Sinyal türü ile mum rengi uyumluluğunu kontrol et
-                if sinyal_tipi == 'ALIŞ' and not is_green_candle:
-                    print(f"⚠️ {symbol} → ALIŞ sinyali için 15m mum yeşil değil, sinyal erteleniyor...")
-                    print(f"   Beklenen: 🟢 Yeşil mum, Mevcut: {'🔴 Kırmızı' if is_red_candle else '⚪ Doğru'} mum")
-                    return None  # Sinyal erteleniyor, sonraki kontrolde tekrar bakılacak
+        # 15 dakikalık mum rengi kontrolü - sadece BTC/ETH olmayan kriptolar için
+        if not is_major_coin:
+            print(f"🔍 {symbol} → 15 dakikalık mum rengi kontrol ediliyor...")
+            try:
+                df_15m = await async_get_historical_data(symbol, '15m', 1)
+                if df_15m is not None and not df_15m.empty:
+                    last_candle = df_15m.iloc[-1]
+                    open_price = float(last_candle['open'])
+                    close_price = float(last_candle['close'])
                     
-                elif sinyal_tipi == 'SATIŞ' and not is_red_candle:
-                    print(f"⚠️ {symbol} → SATIŞ sinyali için 15m mum kırmızı değil, sinyal erteleniyor...")
-                    print(f"   Beklenen: 🔴 Kırmızı mum, Mevcut: {'🟢 Yeşil' if is_green_candle else '⚪ Doğru'} mum")
-                    return None  # Sinyal erteleniyor, sonraki kontrolde tekrar bakılacak
-                
-                print(f"✅ {symbol} → 15m mum rengi uygun! Sinyal veriliyor...")
-                
-            else:
-                print(f"⚠️ {symbol} → 15m mum verisi alınamadı, sinyal veriliyor (veri eksikliği)")
-                
-        except Exception as e:
-            print(f"⚠️ {symbol} → 15m mum kontrolünde hata: {e}, sinyal veriliyor (hata durumu)")
+                    # Mum rengini belirle (yeşil = close > open, kırmızı = close < open)
+                    is_green_candle = close_price > open_price
+                    is_red_candle = close_price < open_price
+                    
+                    print(f"🔍 {symbol} → 15m mum: Açılış=${open_price:.6f}, Kapanış=${close_price:.6f}")
+                    print(f"🔍 {symbol} → 15m mum rengi: {'🟢 Yeşil' if is_green_candle else '🔴 Kırmızı' if is_red_candle else '⚪ Doğru'}")
+                    
+                    # Sinyal türü ile mum rengi uyumluluğunu kontrol et
+                    if sinyal_tipi == 'ALIŞ' and not is_green_candle:
+                        print(f"⚠️ {symbol} → ALIŞ sinyali için 15m mum yeşil değil, sinyal erteleniyor...")
+                        print(f"   Beklenen: 🟢 Yeşil mum, Mevcut: {'🔴 Kırmızı' if is_red_candle else '⚪ Doğru'} mum")
+                        return None  # Sinyal erteleniyor, sonraki kontrolde tekrar bakılacak
+                        
+                    elif sinyal_tipi == 'SATIŞ' and not is_red_candle:
+                        print(f"⚠️ {symbol} → SATIŞ sinyali için 15m mum kırmızı değil, sinyal erteleniyor...")
+                        print(f"   Beklenen: 🔴 Kırmızı mum, Mevcut: {'🟢 Yeşil' if is_green_candle else '⚪ Doğru'} mum")
+                        return None  # Sinyal erteleniyor, sonraki kontrolde tekrar bakılacak
+                    
+                    print(f"✅ {symbol} → 15m mum rengi uygun! Sinyal veriliyor...")
+                    
+                else:
+                    print(f"⚠️ {symbol} → 15m mum verisi alınamadı, sinyal veriliyor (veri eksikliği)")
+                    
+            except Exception as e:
+                print(f"⚠️ {symbol} → 15m mum kontrolünde hata: {e}, sinyal veriliyor (hata durumu)")
+        else:
+            # BTC/ETH için 15m mum kontrolü yapılmıyor
+            print(f"🔍 {symbol} → Major coin (BTC/ETH) - 15m mum kontrolü atlanıyor")
         
         # Fiyat ve hacim bilgilerini al
         try:

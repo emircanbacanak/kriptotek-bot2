@@ -1879,10 +1879,14 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
     buy_signals = sum(1 for s in signal_values if s == 1)
     sell_signals = sum(1 for s in signal_values if s == -1)
     
-    if buy_signals != 7 and sell_signals != 7:
+    # BTC ve ETH için 6/7, diğerleri için 7/7 kuralı
+    is_major_coin = symbol in ['BTCUSDT', 'ETHUSDT']
+    required_signals = 6 if is_major_coin else 7
+    
+    if buy_signals != required_signals and sell_signals != required_signals:
         return None, None, None, None, None, None, None
 
-    if buy_signals == 7 and sell_signals == 0:
+    if buy_signals == required_signals and sell_signals == 0:
         sinyal_tipi = "🟢 LONG SİNYALİ 🟢"
         target_price = price * (1 + profit_percent / 100)  # Örnek: 100 × 1.02 = 102 (yukarı)
         stop_loss = price * (1 - stop_percent / 100)       # Örnek: 100 × 0.985 = 98.5 (aşağı)
@@ -1902,7 +1906,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
             target_price = price * 1.02  # Zorla %2 artış
             print(f"   Düzeltildi: Hedef fiyat = {target_price}")
         
-    elif sell_signals == 7 and buy_signals == 0:
+    elif sell_signals == required_signals and buy_signals == 0:
         sinyal_tipi = "🔴 SHORT SİNYALİ 🔴"
         target_price = price * (1 - profit_percent / 100)  # Örnek: 100 × 0.98 = 98 (aşağı)
         stop_loss = price * (1 + stop_percent / 100)       # Örnek: 100 × 1.015 = 101.5 (yukarı)
@@ -1915,7 +1919,7 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
             print(f"   Düzeltildi: Hedef fiyat = {target_price}")
         
     else:
-        print(f"❌ Beklenmeyen durum: LONG={buy_signals}, SHORT={sell_signals}")
+        print(f"❌ Beklenmeyen durum: LONG={buy_signals}, SHORT={sell_signals}, Required={required_signals}")
         return None, None, None, None, None, None, None
     
     leverage = 10 
@@ -3202,7 +3206,10 @@ async def signal_processing_loop():
                 # EĞER SİNYAL BULUNDUYSA, found_signals'a ekle
                 if signal_result:
                     print(f"🔥 SİNYAL YAKALANDI: {symbol}!")
-                    print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
+                    if symbol in ['BTCUSDT', 'ETHUSDT']:
+                        print(f"   🎯 Major coin (BTC/ETH) - 6/7 kuralı sağlandı!")
+                    else:
+                        print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
                     found_signals[symbol] = signal_result
             
             # Bulunan sinyalleri işle

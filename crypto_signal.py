@@ -2564,8 +2564,12 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             leverage_text = "10x" 
             print(f"✅ {symbol} {sinyal_tipi} sinyali gönderildi! Kaldıraç: {leverage_text}")
             
+            # Başarılı işlem sonucu döndür
+            return True
+            
     except Exception as e:
         print(f"❌ {symbol} sinyal gönderme hatası: {e}")
+        return False
 
 async def check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown):
     """Bot başlangıcında mevcut pozisyonları ve cooldown'ları kontrol eder"""

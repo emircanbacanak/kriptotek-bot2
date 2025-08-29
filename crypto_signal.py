@@ -2508,8 +2508,23 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         return
     
     try:
+        # ETH/BTC için özel debug log
+        if symbol in ['ETHUSDT', 'BTCUSDT']:
+            print(f"🔍 {symbol} → create_signal_message_new_55 çağrılıyor...")
+            print(f"   Price: {price}, Volume: {volume_usd}")
+            print(f"   Current signals: {current_signals}")
+        
         # Mesaj oluştur ve gönder
         message, dominant_signal, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_55(symbol, price, current_signals, volume_usd, 2.0, 1.5)
+        
+        # ETH/BTC için özel debug log
+        if symbol in ['ETHUSDT', 'BTCUSDT']:
+            print(f"🔍 {symbol} → create_signal_message_new_55 sonucu:")
+            print(f"   Message: {'✅ Var' if message else '❌ Yok'}")
+            print(f"   Dominant signal: {dominant_signal}")
+            print(f"   Target price: {target_price}")
+            print(f"   Stop loss: {stop_loss}")
+            print(f"   Leverage: {leverage}")
         
         if message:
             try:

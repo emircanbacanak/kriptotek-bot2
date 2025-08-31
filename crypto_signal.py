@@ -1886,7 +1886,8 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
         # BTC/ETH için 5/7 kuralı kontrol
         if not (buy_signals == 7 and sell_signals == 0) and not (sell_signals == 7 and buy_signals == 0) and \
            not (buy_signals == 6 and sell_signals == 1) and not (sell_signals == 6 and buy_signals == 1) and \
-           not (buy_signals == 5 and sell_signals == 2) and not (sell_signals == 5 and buy_signals == 2):
+           not (buy_signals == 5 and sell_signals == 2) and not (sell_signals == 5 and buy_signals == 2) and \
+           not (buy_signals == 4 and sell_signals == 3) and not (sell_signals == 4 and buy_signals == 3):
             print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_signals}, SHORT={sell_signals}")
             return None, None, None, None, None, None, None
         
@@ -1908,6 +1909,12 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
             dominant_signal = "LONG"
         elif sell_signals == 5 and buy_signals == 2:
             sinyal_tipi = "🔴 SHORT SİNYALİ 🔴 (5/5)"
+            dominant_signal = "SHORT"
+        elif buy_signals == 4 and sell_signals == 3:
+            sinyal_tipi = "🟢 LONG SİNYALİ 🟢 (4/4)"
+            dominant_signal = "LONG"
+        elif sell_signals == 4 and buy_signals == 3:
+            sinyal_tipi = "🔴 SHORT SİNYALİ 🔴 (4/4)"
             dominant_signal = "SHORT"
         else:
             print(f"❌ {symbol} → Sinyal türü belirlenemedi: LONG={buy_signals}, SHORT={sell_signals}")
@@ -1984,6 +1991,9 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
         elif buy_signals == 5 or sell_signals == 5:
             leverage = 5
             print(f"{symbol} - 5/5 sinyal (5x kaldıraç)")
+        elif buy_signals == 4 or sell_signals == 4:
+            leverage = 3
+            print(f"{symbol} - 4/4 sinyal (3x kaldıraç)")
     else:
         # Diğer kriptolar için 7/7 kuralı: Tüm 7 zaman dilimi aynıysa 10x kaldıraçlı
         if max(buy_signals, sell_signals) == 7:
@@ -2448,6 +2458,14 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
                 sinyal_tipi = 'SATIŞ'
                 dominant_signal = "SATIŞ"
                 print(f"✅ {symbol} → SATIŞ sinyali belirlendi (5/5 kuralı - 15dk değişmiş)")
+            elif buy_count == 4 and sell_count == 3:
+                sinyal_tipi = 'ALIŞ'
+                dominant_signal = "ALIŞ"
+                print(f"✅ {symbol} → ALIŞ sinyali belirlendi (4/4 kuralı - 15dk değişmiş)")
+            elif sell_count == 4 and buy_count == 3:
+                sinyal_tipi = 'SATIŞ'
+                dominant_signal = "SATIŞ"
+                print(f"✅ {symbol} → SATIŞ sinyali belirlendi (4/4 kuralı - 15dk değişmiş)")
             else:
                 print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_count}, SHORT={sell_count}")
                 return None
@@ -4407,6 +4425,24 @@ def check_major_coin_signal_rule(symbol, current_signals, previous_signals):
             return True
         else:
             print(f"❌ {symbol} → 5/5 kuralı sağlanamadı (15dk değişmemiş)")
+            return False
+    
+    # 4/4 kuralı - 15dk, 30dk, 1h, 2h aynı olmalı (15dk değişmiş olmalı)
+    if buy_count == 4 and sell_count == 3:
+        # 15dk'nin değişmiş olup olmadığını kontrol et
+        if check_15m_changed(symbol, current_signals, previous_signals):
+            print(f"✅ {symbol} → 4/4 kuralı sağlandı (15dk değişmiş)")
+            return True
+        else:
+            print(f"❌ {symbol} → 4/4 kuralı sağlanamadı (15dk değişmemiş)")
+            return False
+    elif sell_count == 4 and buy_count == 3:
+        # 15dk'nin değişmiş olup olmadığını kontrol et
+        if check_15m_changed(symbol, current_signals, previous_signals):
+            print(f"✅ {symbol} → 4/4 kuralı sağlandı (15dk değişmiş)")
+            return True
+        else:
+            print(f"❌ {symbol} → 4/4 kuralı sağlanamadı (15dk değişmemiş)")
             return False
     
     print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_count}, SHORT={sell_count}")

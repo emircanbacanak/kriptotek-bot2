@@ -1873,38 +1873,28 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
         # BTC/ETH için 5/7 kuralı kontrol - yeni mantık
         # 7/7 kuralı - tüm zaman dilimleri aynı olmalı
         if buy_signals == 7 and sell_signals == 0:
-            sinyal_tipi = "🟢 LONG SİNYALİ 🟢)"
+            sinyal_tipi = "🟢 LONG SİNYALİ 🟢"
             dominant_signal = "LONG"
         elif sell_signals == 7 and buy_signals == 0:
             sinyal_tipi = "🔴 SHORT SİNYALİ 🔴"
             dominant_signal = "SHORT"
+        # 6/7 kuralı - 6 timeframe aynı olmalı
+        elif buy_signals == 6 and sell_signals == 1:
+            sinyal_tipi = "🟢 LONG SİNYALİ 🟢"
+            dominant_signal = "LONG"
+        elif sell_signals == 6 and buy_signals == 1:
+            sinyal_tipi = "🔴 SHORT SİNYALİ 🔴"
+            dominant_signal = "SHORT"
+        # 5/7 kuralı - 5 timeframe aynı olmalı
+        elif buy_signals == 5 and sell_signals == 2:
+            sinyal_tipi = "🟢 LONG SİNYALİ 🟢"
+            dominant_signal = "LONG"
+        elif sell_signals == 5 and buy_signals == 2:
+            sinyal_tipi = "🔴 SHORT SİNYALİ 🔴"
+            dominant_signal = "SHORT"
         else:
-            # 7/6 kuralı - 15dk, 30dk, 1h, 2h, 4h, 8h aynı olmalı
-            tf_6h = ['15m', '30m', '1h', '2h', '4h', '8h']
-            buy_count_6h = sum(1 for tf in tf_6h if all_timeframes_signals.get(tf, 0) == 1)
-            sell_count_6h = sum(1 for tf in tf_6h if all_timeframes_signals.get(tf, 0) == -1)
-            
-            if buy_count_6h == 6 and sell_count_6h == 0:
-                sinyal_tipi = "🟢 LONG SİNYALİ 🟢"
-                dominant_signal = "LONG"
-            elif sell_count_6h == 6 and buy_count_6h == 0:
-                sinyal_tipi = "🔴 SHORT SİNYALİ 🔴"
-                dominant_signal = "SHORT"
-            else:
-                # 7/5 kuralı - 15dk, 30dk, 1h, 2h, 4h aynı olmalı
-                tf_5h = ['15m', '30m', '1h', '2h', '4h']
-                buy_count_5h = sum(1 for tf in tf_5h if all_timeframes_signals.get(tf, 0) == 1)
-                sell_count_5h = sum(1 for tf in tf_5h if all_timeframes_signals.get(tf, 0) == -1)
-                
-                if buy_count_5h == 5 and sell_count_5h == 0:
-                    sinyal_tipi = "🟢 LONG SİNYALİ 🟢"
-                    dominant_signal = "LONG"
-                elif sell_count_5h == 5 and buy_count_5h == 0:
-                    sinyal_tipi = "🔴 SHORT SİNYALİ 🔴"
-                    dominant_signal = "SHORT"
-                else:
-                    print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_signals}, SHORT={sell_signals}")
-                    return None, None, None, None, None, None, None
+            print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_signals}, SHORT={sell_signals}")
+            return None, None, None, None, None, None, None
     else:
         # Diğer kriptolar için 7/7 kuralı
         required_signals = 7

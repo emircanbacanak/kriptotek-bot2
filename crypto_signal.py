@@ -2733,8 +2733,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
 📈 <b>Giriş:</b> ${entry_price:.6f}
 💵 <b>Çıkış:</b> ${target_price:.6f}"""
                     
-                    # MESAJ GÖNDERİMİ KALDIRILDI - close_position() fonksiyonu mesaj gönderecek
-                    print(f"📢 Hedef mesajı close_position() tarafından gönderilecek")
+                    # Pozisyonu kapat ve mesajı gönder
+                    await close_position(symbol, "take_profit", target_price, None, position)
+                    print(f"📢 Hedef mesajı close_position() tarafından gönderildi")
                     
                     # İstatistikleri güncelle
                     stats["successful_signals"] += 1
@@ -2778,6 +2779,10 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                 min_stop_diff = stop_loss * 0.001 
                 if close_price <= stop_loss and (stop_loss - close_price) >= min_stop_diff:
                     print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                    
+                    # Pozisyonu kapat ve mesajı gönder
+                    await close_position(symbol, "stop_loss", close_price, None, position)
+                    print(f"📢 STOP LOSS mesajı close_position() tarafından gönderildi")
                     
                     # İstatistikleri güncelle
                     stats["failed_signals"] += 1
@@ -2834,8 +2839,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
 📈 <b>Giriş:</b> ${entry_price:.6f}
 💵 <b>Çıkış:</b> ${target_price:.6f}"""
                         
-                        # MESAJ GÖNDERİMİ KALDIRILDI - close_position() fonksiyonu mesaj gönderecek
-                        print(f"📢 Hedef mesajı close_position() tarafından gönderilecek")
+                        # Pozisyonu kapat ve mesajı gönder
+                        await close_position(symbol, "take_profit", target_price, None, position)
+                        print(f"📢 SHORT Hedef mesajı close_position() tarafından gönderildi")
                         
                         stats["successful_signals"] += 1
                         if entry_price > 0:
@@ -2877,6 +2883,10 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SHORT: yukarı çıkması zarar)
                     elif close_price >= stop_loss:
                         print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
+                        
+                        # Pozisyonu kapat ve mesajı gönder
+                        await close_position(symbol, "stop_loss", close_price, None, position)
+                        print(f"📢 SHORT STOP LOSS mesajı close_position() tarafından gönderildi")
                         
                         # İstatistikleri güncelle
                         stats["failed_signals"] += 1
@@ -4609,6 +4619,12 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             global_positions.pop(symbol, None)
             global_active_signals.pop(symbol, None)
             return
+        
+        # Mesaj tekrarını engellemek için kontrol
+        message_sent_key = f"message_sent_{symbol}_{trigger_type}"
+        if message_sent_key in position_processing_flags:
+            print(f"⚠️ {symbol} - {trigger_type} mesajı zaten gönderilmiş, tekrar gönderilmiyor.")
+            return
         try:
             if position_data:
                 entry_price_raw = position_data.get('open_price', 0)
@@ -4781,6 +4797,8 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 f"💵 <b>Çıkış:</b> ${exit_price:.6f}"
             )
             await send_signal_to_all_users(message)
+            # Mesaj gönderildi flag'ini set et
+            position_processing_flags[message_sent_key] = datetime.now()
             # Bot sahibine hedef mesajı gönderme
         
         elif trigger_type == "stop_loss":
@@ -4801,6 +4819,8 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             )
             # STOP mesajları sadece bot sahibine gidecek
             await send_admin_message(message)
+            # Mesaj gönderildi flag'ini set et
+            position_processing_flags[message_sent_key] = datetime.now()
         
         # Pozisyonu veritabanından sil - HATA DURUMUNDA TEKRAR DENE
         try:

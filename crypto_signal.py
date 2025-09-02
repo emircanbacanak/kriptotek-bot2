@@ -1969,19 +1969,20 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
             
             if buy_count_6h == 6 or sell_count_6h == 6:
                 leverage = 10
-                print(f"{symbol} - 7/6 sinyal (10x kaldıraç)")
+                print(f"{symbol} - 6/7 sinyal (10x kaldıraç)")
             else:
-                # 7/5 kuralı kontrol
+                # 5/7 kuralı kontrol
                 tf_5h = ['15m', '30m', '1h', '2h', '4h']
                 buy_count_5h = sum(1 for tf in tf_5h if all_timeframes_signals.get(tf, 0) == 1)
                 sell_count_5h = sum(1 for tf in tf_5h if all_timeframes_signals.get(tf, 0) == -1)
                 
                 if buy_count_5h == 5 or sell_count_5h == 5:
                     leverage = 10
-                    print(f"{symbol} - 7/5 sinyal (10x kaldıraç)")
+                    print(f"{symbol} - 5/7 sinyal (10x kaldıraç)")
                 else:
-                    leverage = 10  # Fallback
-                    print(f"{symbol} - 5/7 kuralı sağlanamadı (10x kaldıraç)")
+                    # 5/7 kuralı sağlanamadı, sinyal verilmemeli
+                    print(f"{symbol} - 5/7 kuralı sağlanamadı, sinyal verilmiyor")
+                    return None, None, None, None, None, None, None
     else:
         # Diğer kriptolar için 7/7 kuralı: Tüm 7 zaman dilimi aynıysa 10x kaldıraçlı
         # Bu noktaya gelindiyse, 7/7 kuralı sağlanmıştır, aksi halde None dönülmüştür.
@@ -2412,7 +2413,10 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
                 previous_signals[symbol] = current_signals.copy()
                 return None
             
-            # BTC/ETH için sinyal türünü belirle
+            # BTC/ETH için sinyal türünü belirle - check_major_coin_signal_rule zaten kuralı kontrol etti
+            # Bu noktaya gelindiyse kural sağlanmıştır, spesifik zaman dilimlerini kontrol et
+            
+            # 7/7 kuralı kontrol - tüm 7 zaman dilimi aynı olmalı
             if buy_count == 7 and sell_count == 0:
                 sinyal_tipi = 'ALIŞ'
                 dominant_signal = "ALIŞ"
@@ -2421,25 +2425,38 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
                 sinyal_tipi = 'SATIŞ'
                 dominant_signal = "SATIŞ"
                 print(f"✅ {symbol} → SATIŞ sinyali belirlendi (7/7 kuralı)")
-            elif buy_count == 6 and sell_count == 1:
-                sinyal_tipi = 'ALIŞ'
-                dominant_signal = "ALIŞ"
-                print(f"✅ {symbol} → ALIŞ sinyali belirlendi (6/6 kuralı - 15dk değişmiş)")
-            elif sell_count == 6 and buy_count == 1:
-                sinyal_tipi = 'SATIŞ'
-                dominant_signal = "SATIŞ"
-                print(f"✅ {symbol} → SATIŞ sinyali belirlendi (6/6 kuralı - 15dk değişmiş)")
-            elif buy_count == 5 and sell_count == 2:
-                sinyal_tipi = 'ALIŞ'
-                dominant_signal = "ALIŞ"
-                print(f"✅ {symbol} → ALIŞ sinyali belirlendi (5/5 kuralı - 15dk değişmiş)")
-            elif sell_count == 5 and buy_count == 2:
-                sinyal_tipi = 'SATIŞ'
-                dominant_signal = "SATIŞ"
-                print(f"✅ {symbol} → SATIŞ sinyali belirlendi (5/5 kuralı - 15dk değişmiş)")
             else:
-                print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_count}, SHORT={sell_count}")
-                return None
+                # 6/7 kuralı kontrol - 15dk, 30dk, 1h, 2h, 4h, 8h aynı olmalı
+                tf_6h = ['15m', '30m', '1h', '2h', '4h', '8h']
+                buy_count_6h = sum(1 for tf in tf_6h if current_signals.get(tf, 0) == 1)
+                sell_count_6h = sum(1 for tf in tf_6h if current_signals.get(tf, 0) == -1)
+                
+                if buy_count_6h == 6 and sell_count_6h == 0:
+                    sinyal_tipi = 'ALIŞ'
+                    dominant_signal = "ALIŞ"
+                    print(f"✅ {symbol} → ALIŞ sinyali belirlendi (6/7 kuralı - 15dk,30dk,1h,2h,4h,8h)")
+                elif sell_count_6h == 6 and buy_count_6h == 0:
+                    sinyal_tipi = 'SATIŞ'
+                    dominant_signal = "SATIŞ"
+                    print(f"✅ {symbol} → SATIŞ sinyali belirlendi (6/7 kuralı - 15dk,30dk,1h,2h,4h,8h)")
+                else:
+                    # 5/7 kuralı kontrol - 15dk, 30dk, 1h, 2h, 4h aynı olmalı
+                    tf_5h = ['15m', '30m', '1h', '2h', '4h']
+                    buy_count_5h = sum(1 for tf in tf_5h if current_signals.get(tf, 0) == 1)
+                    sell_count_5h = sum(1 for tf in tf_5h if current_signals.get(tf, 0) == -1)
+                    
+                    if buy_count_5h == 5 and sell_count_5h == 0:
+                        sinyal_tipi = 'ALIŞ'
+                        dominant_signal = "ALIŞ"
+                        print(f"✅ {symbol} → ALIŞ sinyali belirlendi (5/7 kuralı - 15dk,30dk,1h,2h,4h)")
+                    elif sell_count_5h == 5 and buy_count_5h == 0:
+                        sinyal_tipi = 'SATIŞ'
+                        dominant_signal = "SATIŞ"
+                        print(f"✅ {symbol} → SATIŞ sinyali belirlendi (5/7 kuralı - 15dk,30dk,1h,2h,4h)")
+                    else:
+                        # Bu durumda check_major_coin_signal_rule False dönmeli, buraya gelmemeli
+                        print(f"❌ {symbol} → Beklenmeyen durum: LONG={buy_count}, SHORT={sell_count}")
+                        return None
         else:
             # Diğer kriptolar için 7/7 kuralı
             required_signals = 7
@@ -4364,51 +4381,29 @@ def check_major_coin_signal_rule(symbol, current_signals, previous_signals):
         print(f"✅ {symbol} → 7/7 kuralı sağlandı (tüm zaman dilimleri SHORT)")
         return True
     
-    # 7/6 kuralı - 15dk, 30dk, 1h, 2h, 4h, 8h aynı olmalı (15dk değişmiş olmalı)
+    # 6/7 kuralı - 15dk, 30dk, 1h, 2h, 4h, 8h aynı olmalı (15dk değişmiş olma şartı yok)
     tf_6h = ['15m', '30m', '1h', '2h', '4h', '8h']
     buy_count_6h = sum(1 for tf in tf_6h if current_signals.get(tf, 0) == 1)
     sell_count_6h = sum(1 for tf in tf_6h if current_signals.get(tf, 0) == -1)
     
     if buy_count_6h == 6 and sell_count_6h == 0:
-        # 15dk'nin değişmiş olup olmadığını kontrol et
-        if check_15m_changed(symbol, current_signals, previous_signals):
-            print(f"✅ {symbol} → 7/6 kuralı sağlandı (15dk değişmiş)")
-            return True
-        else:
-            print(f"❌ {symbol} → 7/6 kuralı sağlanamadı (15dk değişmemiş)")
-            # 7/6 sağlanmadı, 7/5'e bak
-            pass
+        print(f"✅ {symbol} → 6/7 kuralı sağlandı (15dk,30dk,1h,2h,4h,8h LONG)")
+        return True
     elif sell_count_6h == 6 and buy_count_6h == 0:
-        # 15dk'nin değişmiş olup olmadığını kontrol et
-        if check_15m_changed(symbol, current_signals, previous_signals):
-            print(f"✅ {symbol} → 7/6 kuralı sağlandı (15dk değişmiş)")
-            return True
-        else:
-            print(f"❌ {symbol} → 7/6 kuralı sağlanamadı (15dk değişmemiş)")
-            # 7/6 sağlanmadı, 7/5'e bak
-            pass
+        print(f"✅ {symbol} → 6/7 kuralı sağlandı (15dk,30dk,1h,2h,4h,8h SHORT)")
+        return True
     
-    # 7/5 kuralı - 15dk, 30dk, 1h, 2h, 4h aynı olmalı (15dk değişmiş olmalı)
+    # 5/7 kuralı - 15dk, 30dk, 1h, 2h, 4h aynı olmalı (15dk değişmiş olma şartı yok)
     tf_5h = ['15m', '30m', '1h', '2h', '4h']
     buy_count_5h = sum(1 for tf in tf_5h if current_signals.get(tf, 0) == 1)
     sell_count_5h = sum(1 for tf in tf_5h if current_signals.get(tf, 0) == -1)
     
     if buy_count_5h == 5 and sell_count_5h == 0:
-        # 15dk'nin değişmiş olup olmadığını kontrol et
-        if check_15m_changed(symbol, current_signals, previous_signals):
-            print(f"✅ {symbol} → 7/5 kuralı sağlandı (15dk değişmiş)")
-            return True
-        else:
-            print(f"❌ {symbol} → 7/5 kuralı sağlanamadı (15dk değişmemiş)")
-            return False
+        print(f"✅ {symbol} → 5/7 kuralı sağlandı (15dk,30dk,1h,2h,4h LONG)")
+        return True
     elif sell_count_5h == 5 and buy_count_5h == 0:
-        # 15dk'nin değişmiş olup olmadığını kontrol et
-        if check_15m_changed(symbol, current_signals, previous_signals):
-            print(f"✅ {symbol} → 7/5 kuralı sağlandı (15dk değişmiş)")
-            return True
-        else:
-            print(f"❌ {symbol} → 7/5 kuralı sağlanamadı (15dk değişmemiş)")
-            return False
+        print(f"✅ {symbol} → 5/7 kuralı sağlandı (15dk,30dk,1h,2h,4h SHORT)")
+        return True
     
     print(f"❌ {symbol} → 5/7 kuralı sağlanamadı: LONG={buy_count}, SHORT={sell_count}")
     return False

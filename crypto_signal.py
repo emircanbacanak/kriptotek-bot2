@@ -285,46 +285,28 @@ def update_position_status_atomic(symbol, status, additional_data=None):
         existing_doc = mongo_collection.find_one({"_id": f"active_signal_{symbol}"})
         
         if existing_doc:
-            if "data" in existing_doc:
-                # Data alanı varsa normal güncelleme
-                update_data = {"$set": {"data.status": status, "data.last_updated": str(datetime.now())}}
-                
-                if additional_data:
-                    for key, value in additional_data.items():
-                        update_data["$set"][f"data.{key}"] = value
-                
-                result = mongo_collection.update_one(
-                    {"_id": f"active_signal_{symbol}"},
-                    update_data,
-                    upsert=False
-                )
-            else:
-                # Data alanı yoksa, önce onu oluştur
-                update_data = {"$set": {"data": {"status": status, "last_updated": str(datetime.now())}}}
-                
-                if additional_data:
-                    for key, value in additional_data.items():
-                        update_data["$set"][f"data.{key}"] = value
-                
-                result = mongo_collection.update_one(
-                    {"_id": f"active_signal_{symbol}"},
-                    update_data,
-                    upsert=False
-                )
+            # Üst seviye alanları güncelle (status, last_update ve opsiyonel trigger_type)
+            update_set = {"status": status, "last_update": str(datetime.now())}
+            if additional_data:
+                for key, value in additional_data.items():
+                    update_set[key] = value
+            result = mongo_collection.update_one(
+                {"_id": f"active_signal_{symbol}"},
+                {"$set": update_set},
+                upsert=False
+            )
         else:
             # Doküman yoksa, yeni oluştur
             new_doc = {
                 "_id": f"active_signal_{symbol}",
-                "data": {
-                    "status": status,
-                    "last_updated": str(datetime.now())
-                }
+                "status": status,
+                "last_update": str(datetime.now())
             }
             
             if additional_data:
                 for key, value in additional_data.items():
-                    new_doc["data"][key] = value
-            
+                    new_doc[key] = value
+             
             result = mongo_collection.insert_one(new_doc)
         
         # insert_one için upserted_id, update_one için modified_count kontrol et
@@ -638,7 +620,6 @@ async def set_signal_cooldown_to_db(symbols, cooldown_delta: timedelta):
     except Exception as e:
         print(f"❌ Sinyal cooldown veritabanına kaydedilirken hata: {e}")
         return False
-
 async def check_signal_cooldown(symbol):
     """Belirli bir sembolün cooldown durumunu kontrol eder."""
     try:
@@ -654,7 +635,6 @@ async def check_signal_cooldown(symbol):
     except Exception as e:
         print(f"❌ Sinyal cooldown durumu kontrol edilirken hata: {e}")
         return False
-
 async def clear_signal_cooldown(symbol):
     """Belirli bir sembolün cooldown durumunu temizler."""
     try:
@@ -1287,7 +1267,6 @@ async def help_command(update, context):
 /test - Test sinyali gönder
 /test öğlen - Öğlen uyarı mesajlarını test et
 /test akşam - Akşam uyarı mesajlarını test et
-
 👥 **Kullanıcı Yönetimi:**
 /adduser <user_id> - Kullanıcı ekle
 /removeuser <user_id> - Kullanıcı çıkar
@@ -1300,7 +1279,6 @@ async def help_command(update, context):
 
 🧹 **Temizleme Komutları:**
 /clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
-
 🔧 **Özel Yetkiler:**
 • Tüm komutlara erişim
 • Admin ekleme/silme
@@ -1852,7 +1830,6 @@ def format_volume(volume):
         return f"${volume/1_000:.1f}K"
     else:
         return f"${volume:,.0f}"
-
 def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, profit_percent=2.0, stop_percent=1.5):
     """7/7 sinyal sistemi - 15m,30m,1h,2h,4h,8h,1d zaman dilimlerini kontrol et"""
     price_str = format_price(price, price)
@@ -2382,7 +2359,6 @@ async def get_active_high_volume_usdt_pairs(top_n=50, stop_cooldown=None):
         get_active_high_volume_usdt_pairs._first_run = True
     
     return uygun_pairs
-
 async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, tf_names, previous_signals):
     if symbol in positions:
         print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal aranmıyor")
@@ -2646,11 +2622,6 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             
             # Pozisyonu MongoDB'ye kaydet
             save_positions_to_db({symbol: position})
-            
-            # Aktif sinyale ekle - Artık save_positions_to_db tarafından yapılıyor
-            # active_signals[symbol] = {...}  # Bu kısım kaldırıldı
-            
-            # save_active_signals_to_db(active_signals)  # Artık save_positions_to_db tarafından yapılıyor
             
             # İstatistikleri güncelle
             stats["total_signals"] += 1
@@ -2974,7 +2945,6 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
     
     print(f"✅ Bot başlangıcı kontrolü tamamlandı: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
     print("✅ Bot başlangıcı kontrolü tamamlandı")
-
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
     # Global değişkenleri tanımla
@@ -3387,7 +3357,6 @@ async def signal_processing_loop():
             if not hasattr(signal_processing_loop, '_first_loop'):
                 print("🚀 Yeni sinyal aramaya devam ediliyor...")
                 signal_processing_loop._first_loop = False
-
             for symbol in list(active_signals.keys()):
                 if symbol not in positions:  # Pozisyon kapandıysa aktif sinyalden kaldır
                     del active_signals[symbol]
@@ -3786,20 +3755,6 @@ async def signal_processing_loop():
             except:
                 print(f"   🔍 Debug: DB Positions Count = Hata")
             
-            # Yeni sinyal aramaya devam et
-            print("🚀 Yeni sinyal aramaya devam ediliyor...")
-            
-            # Ana döngü tamamlandı - 15 dakika sonra yeni döngü
-            print("=" * 60)
-            print("🔄 SİNYAL ARAMA DÖNGÜSÜ TAMAMLANDI")
-            print(f"🔄 Döngü #: {getattr(signal_processing_loop, '_loop_count', 'N/A')}")
-            print(f"📊 Bu döngüde kontrol edilen: {len(symbols)} sembol")
-            print(f"🎯 Bulunan sinyal sayısı: {len(found_signals)}")
-            if expired_cooldown_signals:
-                print(f"🔄 Cooldown'dan çıkan: {len(expired_cooldown_signals)} sinyal")
-            print(f"📈 Aktif pozisyon sayısı: {len(positions)}")
-            print(f"⏳ Stop cooldown'daki sembol: {len(stop_cooldown) if stop_cooldown else 0}")
-            
             # Mevcut sinyal cooldown sayısını da göster
             try:
                 if mongo_collection:
@@ -3818,7 +3773,6 @@ async def signal_processing_loop():
         except Exception as e:
             print(f"Genel hata: {e}")
             await asyncio.sleep(30)  # 30 saniye (çok daha hızlı)
-
 async def monitor_signals():
     print("🚀 Sinyal izleme sistemi başlatıldı! (Veri Karışıklığı Düzeltildi)")
 
@@ -3831,6 +3785,19 @@ async def monitor_signals():
             await cleanup_expired_stop_cooldowns()
             
             active_signals = load_active_signals_from_db()
+
+            # 'active' olmayan sinyalleri temizle
+            removed = []
+            for sym in list(active_signals.keys()):
+                if str(active_signals[sym].get('status', 'active')).lower() != 'active':
+                    removed.append(sym)
+                    del active_signals[sym]
+                    try:
+                        if mongo_collection:
+                            mongo_collection.delete_one({"_id": f"active_signal_{sym}"})
+                            print(f"🧹 {sym} aktif değil (status!=active), veritabanından silindi")
+                    except Exception as e:
+                        print(f"⚠️ {sym} silinirken hata: {e}")
 
             if not active_signals:
                 await asyncio.sleep(CONFIG["MONITOR_SLEEP_EMPTY"]) 
@@ -4458,7 +4425,6 @@ def clear_data_by_pattern(pattern, description="veri"):
     except Exception as e:
         print(f"❌ MongoDB'den {description} silinirken hata: {e}")
         return 0
-
 def clear_specific_document(doc_id, description="doküman"):
     """Belirli bir dokümanı MongoDB'den siler"""
     try:

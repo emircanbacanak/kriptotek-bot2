@@ -647,7 +647,6 @@ async def clear_signal_cooldown(symbol):
     except Exception as e:
         print(f"❌ Sinyal cooldown temizlenirken hata: {e}")
         return False
-
 async def get_expired_cooldown_signals():
     """Cooldown süresi biten sinyalleri döndürür ve temizler."""
     try:
@@ -1296,7 +1295,6 @@ async def help_command(update, context):
 /test - Test sinyali gönder
 /test öğlen - Öğlen uyarı mesajlarını test et
 /test akşam - Akşam uyarı mesajlarını test et
-
 👥 **Kullanıcı Yönetimi:**
 /adduser <user_id> - Kullanıcı ekle
 /removeuser <user_id> - Kullanıcı çıkar
@@ -3757,7 +3755,7 @@ async def signal_processing_loop():
             
             # Mevcut sinyal cooldown sayısını da göster
             try:
-                if mongo_collection:
+                if mongo_collection is not None:
                     current_signal_cooldowns = mongo_collection.count_documents({"_id": {"$regex": "^signal_cooldown_"}})
                     print(f"⏳ Sinyal cooldown'daki sembol: {current_signal_cooldowns}")
             except:
@@ -3793,7 +3791,7 @@ async def monitor_signals():
                     removed.append(sym)
                     del active_signals[sym]
                     try:
-                        if mongo_collection:
+                        if mongo_collection is not None:
                             mongo_collection.delete_one({"_id": f"active_signal_{sym}"})
                             print(f"🧹 {sym} aktif değil (status!=active), veritabanından silindi")
                     except Exception as e:
@@ -4401,7 +4399,6 @@ def check_cooldown(symbol, cooldown_dict, hours=4):
         return True
     # Sözlükte yoksa, cooldown'da değildir.
     return False
-
 def clear_data_by_pattern(pattern, description="veri"):
     """Regex pattern ile eşleşen verileri MongoDB'den siler"""
     try:

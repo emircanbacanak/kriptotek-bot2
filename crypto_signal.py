@@ -4971,4 +4971,7 @@ async def send_to_groups_and_channels_only(message):
         print(f"❌ Grup/kanal mesajları gönderilirken hata: {e}")
 
 if __name__ == "__main__":
+    # Heroku için port ayarlaması
+    port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Bot başlatılıyor... Port: {port}")
     asyncio.run(main())

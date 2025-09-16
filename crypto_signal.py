@@ -24,14 +24,14 @@ CONFIG = {
     "STOP_PERCENT": 1.5,
     "LEVERAGE": 10,
     "COOLDOWN_HOURS": 8,  # 8 SAAT COOLDOWN - Hedef ve Stop için
-    "MAIN_LOOP_SLEEP_SECONDS": 300,
-    "MONITOR_LOOP_SLEEP_SECONDS": 3,
+    "MAIN_LOOP_SLEEP_SECONDS": 600,  # 10 dakika (memory için artırıldı)
+    "MONITOR_LOOP_SLEEP_SECONDS": 10,  # 10 saniye (memory için artırıldı)
     "API_RETRY_ATTEMPTS": 3,
     "API_RETRY_DELAYS": [1, 3, 5],  # saniye
-    "MONITOR_SLEEP_EMPTY": 5,
-    "MONITOR_SLEEP_ERROR": 10,
-    "MONITOR_SLEEP_NORMAL": 3,
-    "MAX_SIGNALS_PER_RUN": 5,  # Bir döngüde maksimum bulunacak sinyal sayısı
+    "MONITOR_SLEEP_EMPTY": 30,  # 30 saniye (memory için artırıldı)
+    "MONITOR_SLEEP_ERROR": 60,  # 1 dakika (memory için artırıldı)
+    "MONITOR_SLEEP_NORMAL": 10,  # 10 saniye (memory için artırıldı)
+    "MAX_SIGNALS_PER_RUN": 3,  # Bir döngüde maksimum 3 sinyal (memory için azaltıldı)
     "COOLDOWN_MINUTES": 30,  # Çok fazla sinyal bulunduğunda bekleme süresi
 
 }
@@ -4971,7 +4971,19 @@ async def send_to_groups_and_channels_only(message):
         print(f"❌ Grup/kanal mesajları gönderilirken hata: {e}")
 
 if __name__ == "__main__":
-    # Heroku için port ayarlaması
-    port = int(os.environ.get('PORT', 5000))
-    print(f"🚀 Bot başlatılıyor... Port: {port}")
-    asyncio.run(main())
+    try:
+        # Heroku için port ayarlaması
+        port = int(os.environ.get('PORT', 5000))
+        print(f"🚀 Bot başlatılıyor... Port: {port}")
+        
+        # Memory kullanımını izle
+        import psutil
+        process = psutil.Process()
+        print(f"📊 Başlangıç memory kullanımı: {process.memory_info().rss / 1024 / 1024:.2f} MB")
+        
+        asyncio.run(main())
+        
+    except Exception as e:
+        print(f"❌ Bot başlatma hatası: {e}")
+        import traceback
+        traceback.print_exc()

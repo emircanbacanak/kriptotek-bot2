@@ -989,7 +989,20 @@ def load_stop_cooldown_from_db():
             symbol = doc["_id"].replace("stop_cooldown_", "")
             # Hem eski format (data) hem de yeni format (until) desteği
             if "until" in doc:
-                stop_cooldown[symbol] = doc["until"]
+                # Yeni format: until alanı direkt cooldown bitiş zamanı
+                cooldown_until = doc["until"]
+                if isinstance(cooldown_until, str):
+                    try:
+                        cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
+                    except:
+                        cooldown_until = datetime.now()
+                elif not isinstance(cooldown_until, datetime):
+                    cooldown_until = datetime.now()
+                
+                # Eğer cooldown süresi geçmişse, bu kripto için cooldown yok
+                if cooldown_until > datetime.now():
+                    stop_cooldown[symbol] = cooldown_until
+                # Geçmişse bu kripto için cooldown yok, ekleme
             elif "data" in doc:
                 # Eski format: data'dan until hesapla
                 timestamp = doc["data"]
@@ -1001,7 +1014,13 @@ def load_stop_cooldown_from_db():
                 elif not isinstance(timestamp, datetime):
                     timestamp = datetime.now()
                 
-                stop_cooldown[symbol] = timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
+                # Cooldown bitiş zamanını hesapla
+                cooldown_end = timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
+                
+                # Eğer cooldown süresi geçmişse, bu kripto için cooldown yok
+                if cooldown_end > datetime.now():
+                    stop_cooldown[symbol] = cooldown_end
+                # Geçmişse bu kripto için cooldown yok, ekleme
             else:
                 # Hiçbiri yoksa şimdiki zaman + 4 saat
                 stop_cooldown[symbol] = datetime.now() + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
@@ -2921,7 +2940,12 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
         if isinstance(cooldown_until, str):
             try:
                 cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
-            except:
+                # Tarih geçmişse şimdiki zamanı kullan
+                if cooldown_until < datetime.now():
+                    print(f"⚠️ Cooldown tarihi geçmiş, şimdiki zaman kullanılıyor")
+                    cooldown_until = datetime.now()
+            except Exception as e:
+                print(f"⚠️ Tarih parse hatası: {e}, şimdiki zaman kullanılıyor")
                 cooldown_until = datetime.now()
         elif not isinstance(cooldown_until, datetime):
             cooldown_until = datetime.now()
@@ -3149,11 +3173,16 @@ async def signal_processing_loop():
             cooldown_until = await check_cooldown_status()
             if cooldown_until and datetime.now() < cooldown_until:
                 remaining_time = cooldown_until - datetime.now()
-                remaining_minutes = int(remaining_time.total_seconds() / 60)
-                print(f"⏳ Sinyal cooldown modunda, {remaining_minutes} dakika sonra tekrar sinyal aranacak.")
-                print(f"   (Önceki döngüde çok fazla sinyal bulunduğu için)")
-                await asyncio.sleep(60)  # 1 dakika bekle
-                continue
+                # Negatif süreleri kontrol et
+                if remaining_time.total_seconds() > 0:
+                    remaining_minutes = int(remaining_time.total_seconds() / 60)
+                    print(f"⏳ Sinyal cooldown modunda, {remaining_minutes} dakika sonra tekrar sinyal aranacak.")
+                    print(f"   (Önceki döngüde çok fazla sinyal bulunduğu için)")
+                    await asyncio.sleep(60)  # 1 dakika bekle
+                    continue
+                else:
+                    print(f"⏳ Cooldown süresi geçmiş, devam ediliyor...")
+                    continue
             
             # Cooldown'daki kriptoların detaylarını göster
             if stop_cooldown:
@@ -3164,7 +3193,12 @@ async def signal_processing_loop():
                     if isinstance(cooldown_until, str):
                         try:
                             cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
-                        except:
+                            # Tarih geçmişse şimdiki zamanı kullan
+                            if cooldown_until < current_time:
+                                print(f"⚠️ {symbol}: Cooldown tarihi geçmiş, şimdiki zaman kullanılıyor")
+                                cooldown_until = current_time
+                        except Exception as e:
+                            print(f"⚠️ {symbol}: Tarih parse hatası: {e}, şimdiki zaman kullanılıyor")
                             cooldown_until = current_time
                     elif not isinstance(cooldown_until, datetime):
                         cooldown_until = current_time
@@ -3175,6 +3209,7 @@ async def signal_processing_loop():
                         remaining_seconds = int(remaining_time.total_seconds() % 60)
                         print(f"   🔴 {symbol}: {remaining_minutes}dk {remaining_seconds}sn kaldı")
                     else:
+                        print(f"   🔴 {symbol}: Cooldown süresi geçmiş")
                         print(f"   🟢 {symbol}: Cooldown süresi bitti")
                 print()  # Boş satır ekle
 

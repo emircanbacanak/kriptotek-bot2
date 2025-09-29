@@ -3888,8 +3888,8 @@ async def signal_processing_loop():
 async def monitor_signals():
     print("🚀 Sinyal izleme sistemi başlatıldı! (Veri Karışıklığı Düzeltildi)")
 
-    # Global active_signals değişkenini kullan
-    global active_signals, position_processing_flags
+    # Global değişkenleri kullan
+    global active_signals, position_processing_flags, global_active_signals
     
     while True:
         try:
@@ -3926,7 +3926,6 @@ async def monitor_signals():
                     del active_signals[symbol]
                     
                     # Global active_signals'dan da kaldır
-                    global global_active_signals
                     if symbol in global_active_signals:
                         del global_active_signals[symbol]
                         print(f"✅ {symbol} global_active_signals'dan da kaldırıldı")
@@ -4288,6 +4287,8 @@ def clear_position_data_from_db():
 
 async def clear_all_command(update, context):
     """Tüm verileri temizler: pozisyonlar, aktif sinyaller, önceki sinyaller, bekleyen kuyruklar, istatistikler (sadece bot sahibi)"""
+    global global_active_signals
+    
     user_id, is_authorized = validate_user_command(update, require_owner=True)
     if not is_authorized:
         return
@@ -4314,7 +4315,6 @@ async def clear_all_command(update, context):
             print(f"⚠️ Manuel aktif sinyal temizleme hatası: {e}")
         
         # 4) Global değişkenleri temizle
-        global global_active_signals
         global_active_signals = {}
         
         # Boş aktif sinyal listesi kaydet - bu artık tüm dokümanları silecek
@@ -4675,8 +4675,8 @@ async def cleanup_expired_stop_cooldowns():
         return 0
 
 async def close_position(symbol, trigger_type, final_price, signal, position_data=None):
-    # Global active_signals değişkenini kullan
-    global active_signals, position_processing_flags
+    # Global değişkenleri kullan
+    global active_signals, position_processing_flags, global_active_signals
 
     # İşlem flag'i set et (race condition önleme)
     position_processing_flags[symbol] = datetime.now()
@@ -4952,7 +4952,6 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             print(f"✅ {symbol} active_signals listesinden kaldırıldı")
         
         # Global active_signals'ı da güncelle
-        global global_active_signals
         if symbol in global_active_signals:
             del global_active_signals[symbol]
             print(f"✅ {symbol} global_active_signals'dan kaldırıldı")

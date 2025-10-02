@@ -1297,10 +1297,12 @@ async def help_command(update, context):
 
 🧹 **Temizleme Komutları:**
 /clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
+/reducecooldowns - Cooldown sürelerini %95 kısalt
 🔧 **Özel Yetkiler:**
 • Tüm komutlara erişim
 • Admin ekleme/silme
 • Veri temizleme
+• Cooldown sürelerini kısaltma
 • Bot tam kontrolü
         """
     elif user_id in ADMIN_USERS:
@@ -1801,6 +1803,7 @@ async def setup_bot():
     app.add_handler(CommandHandler("adminsil", adminsil_command))
     app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CommandHandler("clearall", clear_all_command))
+    app.add_handler(CommandHandler("reducecooldowns", reduce_cooldowns_command))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
@@ -4279,6 +4282,28 @@ def clear_position_data_from_db():
         print(f"❌ MongoDB'den pozisyonlar silinirken hata: {e}")
         return 0
 
+async def reduce_cooldowns_command(update, context):
+    """Cooldown sürelerini %95 kısalt - Sadece bot sahibi"""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        await send_command_response(update, "❌ Bu komut sadece bot sahibi tarafından kullanılabilir.")
+        return
+    
+    try:
+        # Cooldown'ları kısalt
+        success, message = await reduce_cooldowns_by_95_percent()
+        
+        if success:
+            await send_command_response(update, message)
+        else:
+            await send_command_response(update, f"❌ {message}")
+            
+    except Exception as e:
+        await send_command_response(update, f"❌ Cooldown kısaltma işlemi sırasında hata: {e}")
+
 async def clear_all_command(update, context):
     """Tüm verileri temizler: pozisyonlar, aktif sinyaller, önceki sinyaller, bekleyen kuyruklar, istatistikler (sadece bot sahibi)"""
     global global_active_signals
@@ -4542,6 +4567,77 @@ def add_stop_cooldown_safe(symbol, stop_cooldown_dict):
         print(f"🆕 {symbol} → İlk cooldown başlatıldı: {new_cooldown_end.strftime('%H:%M:%S')}")
     
     return stop_cooldown_dict[symbol]
+async def reduce_cooldowns_by_95_percent():
+    """
+    Mevcut cooldown sürelerini %95 kısaltır.
+    Sadece bot sahibi tarafından kullanılabilir.
+    """
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                print("❌ MongoDB bağlantısı kurulamadı, cooldown'lar kısaltılamadı")
+                return False, "MongoDB bağlantısı kurulamadı"
+        
+        # Mevcut cooldown'ları yükle
+        stop_cooldown = load_stop_cooldown_from_db()
+        
+        if not stop_cooldown:
+            return True, "Cooldown'da hiç kripto bulunmuyor"
+        
+        current_time = datetime.now()
+        reduced_count = 0
+        reduced_symbols = []
+        
+        # Her cooldown'ı %95 kısalt
+        for symbol, cooldown_until in stop_cooldown.items():
+            if isinstance(cooldown_until, str):
+                try:
+                    cooldown_until = datetime.fromisoformat(cooldown_until.replace('Z', '+00:00'))
+                except:
+                    continue
+            elif not isinstance(cooldown_until, datetime):
+                continue
+            
+            # Eğer cooldown henüz bitmemişse
+            if cooldown_until > current_time:
+                # Kalan süreyi hesapla
+                remaining_time = cooldown_until - current_time
+                
+                # %95 kısalt (sadece %5'i kalacak)
+                new_remaining_time = remaining_time * 0.05
+                new_cooldown_until = current_time + new_remaining_time
+                
+                # Cooldown'ı güncelle
+                stop_cooldown[symbol] = new_cooldown_until
+                reduced_count += 1
+                
+                # Kısaltılan süreleri kaydet
+                old_hours = remaining_time.total_seconds() / 3600
+                new_hours = new_remaining_time.total_seconds() / 3600
+                reduced_symbols.append(f"{symbol}: {old_hours:.1f}h → {new_hours:.1f}h")
+        
+        if reduced_count > 0:
+            # Güncellenmiş cooldown'ları kaydet
+            save_stop_cooldown_to_db(stop_cooldown)
+            
+            result_message = f"✅ {reduced_count} kripto için cooldown %95 kısaltıldı!\n\n"
+            result_message += "Kısaltılan kriptolar:\n"
+            for symbol_info in reduced_symbols[:10]:  # İlk 10'unu göster
+                result_message += f"• {symbol_info}\n"
+            
+            if len(reduced_symbols) > 10:
+                result_message += f"... ve {len(reduced_symbols) - 10} tane daha"
+            
+            print(f"🔄 {reduced_count} cooldown %95 kısaltıldı")
+            return True, result_message
+        else:
+            return True, "Kısaltılacak aktif cooldown bulunamadı"
+            
+    except Exception as e:
+        error_msg = f"Cooldown kısaltma hatası: {e}"
+        print(f"❌ {error_msg}")
+        return False, error_msg
+
 def clear_data_by_pattern(pattern, description="veri"):
     """Regex pattern ile eşleşen verileri MongoDB'den siler"""
     try:

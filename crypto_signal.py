@@ -2753,11 +2753,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         profit_usd = 0
                     stats["total_profit_loss"] += profit_usd
                     
-                    # Cooldown'a ekle (4 saat)
-                    cooldown_time = datetime.now()
-                    stop_cooldown[symbol] = cooldown_time
-                    print(f"🔒 {symbol} → HEDEF GERÇEKLEŞTİ! Cooldown'a eklendi: {cooldown_time.strftime('%H:%M:%S')}")
-                    print(f"   Cooldown süresi: 4 saat → Bitiş: {(cooldown_time + timedelta(hours=4)).strftime('%H:%M:%S')}")
+                    # Cooldown'a ekle (8 saat) - Güvenli ekleme
+                    cooldown_end_time = add_stop_cooldown_safe(symbol, stop_cooldown)
+                    print(f"🔒 {symbol} → HEDEF GERÇEKLEŞTİ! Cooldown bitiş: {cooldown_end_time.strftime('%H:%M:%S')}")
                     save_stop_cooldown_to_db(stop_cooldown)
                     
                     # Pozisyon ve aktif sinyali kaldır
@@ -2800,9 +2798,8 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         loss_usd = 0
                     stats["total_profit_loss"] -= loss_usd
                     
-                    # Cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
-                    current_time = datetime.now()
-                    stop_cooldown[symbol] = current_time
+                    # Cooldown'a ekle (8 saat) - Güvenli ekleme
+                    cooldown_end_time = add_stop_cooldown_safe(symbol, stop_cooldown)
                     save_stop_cooldown_to_db(stop_cooldown)
                     
                     # Pozisyon ve aktif sinyali kaldır
@@ -2857,11 +2854,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                             profit_usd = 0
                         stats["total_profit_loss"] += profit_usd
                         
-                        # Cooldown'a ekle (4 saat)
-                        cooldown_time = datetime.now()
-                        stop_cooldown[symbol] = cooldown_time
-                        print(f"🔒 {symbol} → SHORT HEDEF GERÇEKLEŞTİ! Cooldown'a eklendi: {cooldown_time.strftime('%H:%M:%S')}")
-                        print(f"   Cooldown süresi: 4 saat → Bitiş: {(cooldown_time + timedelta(hours=4)).strftime('%H:%M:%S')}")
+                        # Cooldown'a ekle (8 saat) - Güvenli ekleme
+                        cooldown_end_time = add_stop_cooldown_safe(symbol, stop_cooldown)
+                        print(f"🔒 {symbol} → SHORT HEDEF GERÇEKLEŞTİ! Cooldown bitiş: {cooldown_end_time.strftime('%H:%M:%S')}")
                         save_stop_cooldown_to_db(stop_cooldown)
                         
                         # Pozisyon ve aktif sinyali kaldır
@@ -2904,9 +2899,8 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                             loss_usd = 0
                         stats["total_profit_loss"] -= loss_usd
                         
-                        # Cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
-                        current_time = datetime.now()
-                        stop_cooldown[symbol] = current_time
+                        # Cooldown'a ekle (8 saat) - Güvenli ekleme
+                        cooldown_end_time = add_stop_cooldown_safe(symbol, stop_cooldown)
                         save_stop_cooldown_to_db(stop_cooldown)
                         
                         del positions[symbol]
@@ -3327,7 +3321,7 @@ async def signal_processing_loop():
                     signal_result = await check_signal_potential(
                         symbol, positions, stop_cooldown, timeframes, tf_names, previous_signals
                     )
-                
+                    
                     # EĞER SİNYAL BULUNDUYSA, batch_signals'a ekle
                     if signal_result:
                         print(f"🔥 SİNYAL YAKALANDI: {symbol}!")
@@ -3335,7 +3329,7 @@ async def signal_processing_loop():
                             print(f"   🎯 Major coin (BTC/ETH) - 6/7 kuralı sağlandı!")
                         else:
                             print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
-                        batch_signals[symbol] = signal_result
+                            batch_signals[symbol] = signal_result
                 
                 # Bu grup için sinyal işleme
                 if batch_signals:
@@ -3561,7 +3555,7 @@ async def signal_processing_loop():
                             
                             # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
                             current_time = datetime.now()
-                            stop_cooldown[symbol] = current_time
+                            stop_cooldown[symbol] = current_time + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
@@ -3623,7 +3617,7 @@ async def signal_processing_loop():
                             
                             # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
                             current_time = datetime.now()
-                            stop_cooldown[symbol] = current_time
+                            stop_cooldown[symbol] = current_time + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
                             
                             # Sinyal cooldown'a da ekle (30 dakika)
                             await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
@@ -3686,7 +3680,7 @@ async def signal_processing_loop():
                             
                             # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
                             current_time = datetime.now()
-                            stop_cooldown[symbol] = current_time
+                            stop_cooldown[symbol] = current_time + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
                             
                             # Cooldown'ı veritabanına kaydet
                             save_stop_cooldown_to_db(stop_cooldown)
@@ -3747,7 +3741,7 @@ async def signal_processing_loop():
                             
                             # Stop cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
                             current_time = datetime.now()
-                            stop_cooldown[symbol] = current_time
+                            stop_cooldown[symbol] = current_time + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
                             
                             # Sinyal cooldown'a da ekle (30 dakika)
                             await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
@@ -4521,6 +4515,33 @@ def check_cooldown(symbol, cooldown_dict, hours=4):
         return True
     # Sözlükte yoksa, cooldown'da değildir.
     return False
+
+def add_stop_cooldown_safe(symbol, stop_cooldown_dict):
+    """
+    Stop cooldown eklerken mevcut cooldown'ı kontrol eder.
+    Aynı kripto için yeni stop/hedelf olduğunda cooldown SIFIRLANIR (uzatılmaz).
+    """
+    current_time = datetime.now()
+    new_cooldown_end = current_time + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
+    
+    if symbol in stop_cooldown_dict:
+        existing_end = stop_cooldown_dict[symbol]
+        
+        # Eğer mevcut cooldown henüz bitmemişse
+        if existing_end > current_time:
+            # Aynı kripto için yeni stop/hedelf olduğunda cooldown SIFIRLANIR
+            stop_cooldown_dict[symbol] = new_cooldown_end
+            print(f"🔄 {symbol} → Yeni stop/hedelf! Cooldown sıfırlandı: {existing_end.strftime('%H:%M:%S')} → {new_cooldown_end.strftime('%H:%M:%S')}")
+        else:
+            # Mevcut cooldown bitmişse, yeni cooldown başlat
+            stop_cooldown_dict[symbol] = new_cooldown_end
+            print(f"🆕 {symbol} → Cooldown süresi dolmuştu, yeni cooldown başlatıldı: {new_cooldown_end.strftime('%H:%M:%S')}")
+    else:
+        # Hiç cooldown yoksa, yeni cooldown başlat
+        stop_cooldown_dict[symbol] = new_cooldown_end
+        print(f"🆕 {symbol} → İlk cooldown başlatıldı: {new_cooldown_end.strftime('%H:%M:%S')}")
+    
+    return stop_cooldown_dict[symbol]
 def clear_data_by_pattern(pattern, description="veri"):
     """Regex pattern ile eşleşen verileri MongoDB'den siler"""
     try:
@@ -4614,17 +4635,17 @@ def save_stop_cooldown_to_db(stop_cooldown):
                 return False
         
         # Mevcut cooldown'ları güncelle, yeni olanları ekle
-        for symbol, timestamp in stop_cooldown.items():
+        for symbol, cooldown_until in stop_cooldown.items():
             doc_id = f"stop_cooldown_{symbol}"
-            cooldown_until = timestamp + timedelta(hours=CONFIG["COOLDOWN_HOURS"])  # 4 saat sonrası
+            # cooldown_until artık direkt bitiş zamanı (timestamp + 8 saat)
             
             # Upsert kullan: varsa güncelle, yoksa ekle
             mongo_collection.update_one(
                 {"_id": doc_id},
                 {
                     "$set": {
-                        "data": timestamp,
-                        "until": cooldown_until,
+                        "data": cooldown_until - timedelta(hours=CONFIG["COOLDOWN_HOURS"]),  # Başlangıç zamanı
+                        "until": cooldown_until,  # Bitiş zamanı
                         "timestamp": datetime.now()
                     }
                 },
@@ -4934,13 +4955,12 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             except Exception as e2:
                 print(f"❌ {symbol} veritabanından ikinci denemede de silinemedi: {e2}")
         
-        # Cooldown'a ekle (8 saat) - Pozisyon kapandığı zamandan itibaren
-        current_time = datetime.now()
+        # Cooldown'a ekle (8 saat) - Güvenli ekleme
         global global_stop_cooldown
-        global_stop_cooldown[symbol] = current_time
+        cooldown_end_time = add_stop_cooldown_safe(symbol, global_stop_cooldown)
         
         # Cooldown'ı veritabanına kaydet
-        save_stop_cooldown_to_db({symbol: current_time})
+        save_stop_cooldown_to_db({symbol: cooldown_end_time})
         
         # Bellekteki global değişkenlerden de temizle
         global_positions.pop(symbol, None)

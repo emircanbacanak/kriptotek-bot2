@@ -3329,37 +3329,61 @@ async def signal_processing_loop():
                     if signal_result:
                         print(f"🔥 SİNYAL YAKALANDI: {symbol}!")
                         if symbol in ['BTCUSDT', 'ETHUSDT']:
-                            print(f"   🎯 Major coin (BTC/ETH) - 6/7 kuralı sağlandı!")
+                            print(f"   🎯 Major coin (BTC/ETH) - 5/7 kuralı sağlandı!")
                         else:
                             print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
-                            batch_signals[symbol] = signal_result
+                        
+                        # TÜM SİNYALLER (major coinler dahil) batch_signals'a eklenir
+                        batch_signals[symbol] = signal_result
                 
                 # Bu grup için sinyal işleme
                 if batch_signals:
                     print(f"📊 Grup {batch_num + 1}: {len(batch_signals)} sinyal bulundu")
                     
-                    # Hacim verilerini çek
-                    volumes = await get_volumes_for_symbols(list(batch_signals.keys()))
+                    # Major coinler için özel işlem - hemen gönder
+                    major_coin_signals = {k: v for k, v in batch_signals.items() if k in ['BTCUSDT', 'ETHUSDT']}
+                    regular_signals = {k: v for k, v in batch_signals.items() if k not in ['BTCUSDT', 'ETHUSDT']}
                     
-                    # Hacim verisine göre sırala
-                    sorted_batch_signals = sorted(
-                        batch_signals.items(),
-                        key=lambda item: volumes.get(item[0], 0),
-                        reverse=True
-                    )
+                    # Major coinler varsa hemen işle
+                    if major_coin_signals:
+                        print(f"🚀 MAJOR COIN SİNYALLERİ BULUNDU! Hemen gönderiliyor...")
+                        for symbol, signal_data in major_coin_signals.items():
+                            print(f"   ⚡ {symbol} major coin sinyali hemen gönderiliyor!")
+                            
+                            # Hacim verisini çek
+                            volumes = await get_volumes_for_symbols([symbol])
+                            volume = volumes.get(symbol, 0)
+                            
+                            # Major coin sinyalini hemen işle
+                            await process_selected_signal(signal_data, positions, active_signals, stats)
+                            
+                            # Cooldown'a ekle (30 dakika)
+                            await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
                     
-                    # En yüksek hacimli sinyali seç ve pending_signals'a ekle
-                    best_signal = sorted_batch_signals[0]
-                    symbol, signal_data = best_signal
-                    volume = volumes.get(symbol, 0)
-                    
-                    pending_signals[symbol] = {
-                        'signal_data': signal_data,
-                        'volume': volume,
-                        'batch_num': batch_num + 1
-                    }
-                    
-                    print(f"🏆 Grup {batch_num + 1} en iyi sinyal: {symbol} (Hacim: {volume:,.0f})")
+                    # Normal coinler için hacim bazlı seçim
+                    if regular_signals:
+                        # Hacim verilerini çek
+                        volumes = await get_volumes_for_symbols(list(regular_signals.keys()))
+                        
+                        # Hacim verisine göre sırala
+                        sorted_regular_signals = sorted(
+                            regular_signals.items(),
+                            key=lambda item: volumes.get(item[0], 0),
+                            reverse=True
+                        )
+                        
+                        # En yüksek hacimli sinyali seç ve pending_signals'a ekle
+                        best_signal = sorted_regular_signals[0]
+                        symbol, signal_data = best_signal
+                        volume = volumes.get(symbol, 0)
+                        
+                        pending_signals[symbol] = {
+                            'signal_data': signal_data,
+                            'volume': volume,
+                            'batch_num': batch_num + 1
+                        }
+                        
+                        print(f"🏆 Grup {batch_num + 1} en iyi normal sinyal: {symbol} (Hacim: {volume:,.0f})")
                 else:
                     print(f"📊 Grup {batch_num + 1}: Sinyal bulunamadı")
                 

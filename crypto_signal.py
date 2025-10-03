@@ -1298,11 +1298,16 @@ async def help_command(update, context):
 🧹 **Temizleme Komutları:**
 /clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
 /reducecooldowns - Cooldown sürelerini %95 kısalt
+
+📊 **Analiz Komutları:**
+/stats close - Stop analiz raporu (alternatif senaryolar)
+
 🔧 **Özel Yetkiler:**
 • Tüm komutlara erişim
 • Admin ekleme/silme
 • Veri temizleme
 • Cooldown sürelerini kısaltma
+• Stop analiz raporları
 • Bot tam kontrolü
         """
     elif user_id in ADMIN_USERS:
@@ -1804,6 +1809,7 @@ async def setup_bot():
     app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CommandHandler("clearall", clear_all_command))
     app.add_handler(CommandHandler("reducecooldowns", reduce_cooldowns_command))
+    app.add_handler(CommandHandler("stats", stats_close_command))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
@@ -2790,6 +2796,9 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     await close_position(symbol, "stop_loss", close_price, None, position)
                     print(f"📢 STOP LOSS mesajı close_position() tarafından gönderildi")
                     
+                    # Stop analiz için takip et (ana sistemden tamamen ayrı)
+                    await track_stop_for_analysis(symbol, entry_price)
+                    
                     # İstatistikleri güncelle
                     stats["failed_signals"] += 1
                     # Güvenli zarar hesaplaması
@@ -3306,32 +3315,32 @@ async def signal_processing_loop():
                     # Halihazırda pozisyon varsa veya stop cooldown'daysa atla
                     if symbol in positions:
                         continue
-                    
-                    # STOP COOLDOWN KONTROLÜ - 4 saat boyunca kesinlikle sinyal verilmez!
-                    if check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]):
+                
+                # STOP COOLDOWN KONTROLÜ - 4 saat boyunca kesinlikle sinyal verilmez!
+                if check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]):
+                    continue
+                
+                # Sinyal cooldown kontrolü - süresi bitenler hariç
+                if await check_signal_cooldown(symbol):
+                    # Cooldown süresi biten sinyaller tekrar değerlendirilecek
+                    if symbol in expired_cooldown_signals:
+                        print(f"🔄 {symbol} sinyal cooldown süresi bitti, tekrar değerlendiriliyor")
+                    else:
+                        # Hala cooldown'da olan sinyaller atlanır
                         continue
-                    
-                    # Sinyal cooldown kontrolü - süresi bitenler hariç
-                    if await check_signal_cooldown(symbol):
-                        # Cooldown süresi biten sinyaller tekrar değerlendirilecek
-                        if symbol in expired_cooldown_signals:
-                            print(f"🔄 {symbol} sinyal cooldown süresi bitti, tekrar değerlendiriliyor")
-                        else:
-                            # Hala cooldown'da olan sinyaller atlanır
-                            continue
-                    
-                    # Sinyal potansiyelini kontrol et
-                    signal_result = await check_signal_potential(
-                        symbol, positions, stop_cooldown, timeframes, tf_names, previous_signals
-                    )
-                    
+                
+                # Sinyal potansiyelini kontrol et
+                signal_result = await check_signal_potential(
+                    symbol, positions, stop_cooldown, timeframes, tf_names, previous_signals
+                )
+                
                     # EĞER SİNYAL BULUNDUYSA, batch_signals'a ekle
-                    if signal_result:
-                        print(f"🔥 SİNYAL YAKALANDI: {symbol}!")
-                        if symbol in ['BTCUSDT', 'ETHUSDT']:
+                if signal_result:
+                    print(f"🔥 SİNYAL YAKALANDI: {symbol}!")
+                    if symbol in ['BTCUSDT', 'ETHUSDT']:
                             print(f"   🎯 Major coin (BTC/ETH) - 5/7 kuralı sağlandı!")
-                        else:
-                            print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
+                    else:
+                        print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
                         
                         # TÜM SİNYALLER (major coinler dahil) batch_signals'a eklenir
                         batch_signals[symbol] = signal_result
@@ -3362,28 +3371,28 @@ async def signal_processing_loop():
                     
                     # Normal coinler için hacim bazlı seçim
                     if regular_signals:
-                        # Hacim verilerini çek
+                    # Hacim verilerini çek
                         volumes = await get_volumes_for_symbols(list(regular_signals.keys()))
-                        
-                        # Hacim verisine göre sırala
+                    
+                    # Hacim verisine göre sırala
                         sorted_regular_signals = sorted(
                             regular_signals.items(),
-                            key=lambda item: volumes.get(item[0], 0),
-                            reverse=True
-                        )
-                        
-                        # En yüksek hacimli sinyali seç ve pending_signals'a ekle
+                        key=lambda item: volumes.get(item[0], 0),
+                        reverse=True
+                    )
+                    
+                    # En yüksek hacimli sinyali seç ve pending_signals'a ekle
                         best_signal = sorted_regular_signals[0]
-                        symbol, signal_data = best_signal
-                        volume = volumes.get(symbol, 0)
-                        
-                        pending_signals[symbol] = {
-                            'signal_data': signal_data,
-                            'volume': volume,
-                            'batch_num': batch_num + 1
-                        }
-                        
-                        print(f"🏆 Grup {batch_num + 1} en iyi normal sinyal: {symbol} (Hacim: {volume:,.0f})")
+                    symbol, signal_data = best_signal
+                    volume = volumes.get(symbol, 0)
+                    
+                    pending_signals[symbol] = {
+                        'signal_data': signal_data,
+                        'volume': volume,
+                        'batch_num': batch_num + 1
+                    }
+                    
+                    print(f"🏆 Grup {batch_num + 1} en iyi normal sinyal: {symbol} (Hacim: {volume:,.0f})")
                 else:
                     print(f"📊 Grup {batch_num + 1}: Sinyal bulunamadı")
                 
@@ -4328,6 +4337,24 @@ async def reduce_cooldowns_command(update, context):
     except Exception as e:
         await send_command_response(update, f"❌ Cooldown kısaltma işlemi sırasında hata: {e}")
 
+async def stats_close_command(update, context):
+    """Stop analiz raporu - Sadece bot sahibi"""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        await send_command_response(update, "❌ Bu komut sadece bot sahibi tarafından kullanılabilir.")
+        return
+    
+    try:
+        # Stop analiz raporunu oluştur
+        report = await generate_stop_analysis_report()
+        await send_command_response(update, report)
+            
+    except Exception as e:
+        await send_command_response(update, f"❌ Stop analiz raporu oluşturulamadı: {e}")
+
 async def clear_all_command(update, context):
     """Tüm verileri temizler: pozisyonlar, aktif sinyaller, önceki sinyaller, bekleyen kuyruklar, istatistikler (sadece bot sahibi)"""
     global global_active_signals
@@ -4367,6 +4394,9 @@ async def clear_all_command(update, context):
         
         # 5.5) Sinyal cooldown'ları temizle
         signal_cooldown_deleted = clear_data_by_pattern("^signal_cooldown_", "sinyal cooldown")
+        
+        # 5.6) Stop analiz verilerini temizle
+        stop_analysis_deleted = clear_data_by_pattern("^stop_analysis_", "stop analiz")
         
         # 6) JSON dosyasını da temizle
         try:
@@ -4409,12 +4439,14 @@ async def clear_all_command(update, context):
             final_active = mongo_collection.count_documents({"_id": {"$regex": "^active_signal_"}})
             final_cooldown = mongo_collection.count_documents({"_id": {"$regex": "^stop_cooldown_"}})
             final_signal_cooldown = mongo_collection.count_documents({"_id": {"$regex": "^signal_cooldown_"}})
+            final_stop_analysis = mongo_collection.count_documents({"_id": {"$regex": "^stop_analysis_"}})
             
             print(f"🔍 Temizleme sonrası kontrol:")
             print(f"   Kalan pozisyon: {final_positions}")
             print(f"   Kalan aktif sinyal: {final_active}")
             print(f"   Kalan stop cooldown: {final_cooldown}")
             print(f"   Kalan sinyal cooldown: {final_signal_cooldown}")
+            print(f"   Kalan stop analiz: {final_stop_analysis}")
             
         except Exception as e:
             print(f"⚠️ Son kontrol hatası: {e}")
@@ -4426,6 +4458,7 @@ async def clear_all_command(update, context):
             f"• Aktif sinyal: {active_deleted} silindi\n"
             f"• Stop cooldown: {cooldown_deleted} silindi\n"
             f"• Sinyal cooldown: {signal_cooldown_deleted} silindi\n"
+            f"• Stop analiz: {stop_analysis_deleted} silindi\n"
             f"• Önceki sinyal: {prev_deleted} silindi (initialized: {'silindi' if init_deleted else 'yok'})\n"
             f"• Bekleyen kuyruklar sıfırlandı\n"
             f"• İstatistikler sıfırlandı"
@@ -4661,6 +4694,174 @@ async def reduce_cooldowns_by_95_percent():
         error_msg = f"Cooldown kısaltma hatası: {e}"
         print(f"❌ {error_msg}")
         return False, error_msg
+
+async def generate_stop_analysis_report():
+    """Stop analiz raporunu oluşturur"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return "❌ MongoDB bağlantısı kurulamadı"
+        
+        # Stop olan coinleri yükle
+        stop_analysis_data = load_stop_analysis_data()
+        
+        if not stop_analysis_data:
+            return "📊 **STOP ANALİZ RAPORU** 📈\n\nHenüz analiz edilecek stop verisi bulunmuyor."
+        
+        # Senaryo analizlerini hesapla
+        scenario_1 = calculate_scenario_analysis(stop_analysis_data, 2.0, 2.0)
+        scenario_2 = calculate_scenario_analysis(stop_analysis_data, 2.0, 3.0)
+        
+        # Rapor oluştur
+        report = f"""📈 **STOP ANALİZ RAPORU** 📈
+
+🕐 **Son Güncelleme**: {datetime.now().strftime('%H:%M:%S')}
+📅 **Analiz Tarihi**: {datetime.now().strftime('%Y-%m-%d')}
+
+📊 **ALTERNATİF SENARYOLAR ANALİZİ:**
+
+┌─────────────────────────────────────────────────────────┐
+│ 🎯 **SENARYO 1: %2 TP / %2 SL**                        │
+├─────────────────────────────────────────────────────────┤
+│ ✅ Hedefe Ulaşan: {scenario_1['target_hit']} coin ({scenario_1['target_hit_percent']:.1f}%)                       │
+│ ❌ Stop Olan: {scenario_1['stop_hit']} coin ({scenario_1['stop_hit_percent']:.1f}%)                           │
+│ 📈 Toplam Kazanç: +${scenario_1['total_profit']:.0f} ({scenario_1['target_hit']}×$20)                        │
+│ 📉 Toplam Kayıp: -${scenario_1['total_loss']:.0f} ({scenario_1['stop_hit']}×$20)                          │
+│ 💰 Net Sonuç: +${scenario_1['net_result']:.0f} (+{scenario_1['net_percent']:.0f}%)                              │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│ 🎯 **SENARYO 2: %2 TP / %3 SL**                        │
+├─────────────────────────────────────────────────────────┤
+│ ✅ Hedefe Ulaşan: {scenario_2['target_hit']} coin ({scenario_2['target_hit_percent']:.1f}%)                       │
+│ ❌ Stop Olan: {scenario_2['stop_hit']} coin ({scenario_2['stop_hit_percent']:.1f}%)                           │
+│ 📈 Toplam Kazanç: +${scenario_2['total_profit']:.0f} ({scenario_2['target_hit']}×$20)                       │
+│ 📉 Toplam Kayıp: -${scenario_2['total_loss']:.0f} ({scenario_2['stop_hit']}×$30)                          │
+│ 💰 Net Sonuç: +${scenario_2['net_result']:.0f} (+{scenario_2['net_percent']:.0f}%)                            │
+└─────────────────────────────────────────────────────────┘
+
+🏆 **EN İYİ SENARYO**: {"%2 TP / %3 SL" if scenario_2['net_result'] > scenario_1['net_result'] else "%2 TP / %2 SL"} ({max(scenario_2['target_hit_percent'], scenario_1['target_hit_percent']):.1f}% başarı)
+📊 **ÖNERİLEN AYAR**: Risk/Reward = 1:1.5"""
+        
+        return report
+        
+    except Exception as e:
+        return f"❌ Stop analiz raporu oluşturulamadı: {e}"
+
+def load_stop_analysis_data():
+    """Stop analiz verilerini yükler"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return {}
+        
+        stop_data = {}
+        docs = mongo_collection.find({"_id": {"$regex": "^stop_analysis_"}})
+        
+        for doc in docs:
+            symbol = doc["_id"].replace("stop_analysis_", "")
+            if "data" in doc:
+                stop_data[symbol] = doc["data"]
+        
+        return stop_data
+        
+    except Exception as e:
+        return {}
+
+def calculate_scenario_analysis(stop_data, target_percent, stop_percent):
+    """Senaryo analizini hesaplar"""
+    total_coins = len(stop_data)
+    if total_coins == 0:
+        return {
+            'target_hit': 0,
+            'target_hit_percent': 0,
+            'stop_hit': 0,
+            'stop_hit_percent': 0,
+            'total_profit': 0,
+            'total_loss': 0,
+            'net_result': 0,
+            'net_percent': 0
+        }
+    
+    target_hit = 0
+    stop_hit = 0
+    
+    for symbol, data in stop_data.items():
+        entry_price = data.get('entry_price', 0)
+        if entry_price == 0:
+            continue
+            
+        # Hedef fiyatını hesapla
+        target_price = entry_price * (1 + target_percent / 100)
+        stop_price = entry_price * (1 - stop_percent / 100)
+        
+        # Gerçek fiyat hareketini kontrol et
+        actual_price = data.get('actual_price', entry_price)
+        
+        if actual_price >= target_price:
+            target_hit += 1
+        elif actual_price <= stop_price:
+            stop_hit += 1
+    
+    target_hit_percent = (target_hit / total_coins) * 100
+    stop_hit_percent = (stop_hit / total_coins) * 100
+    
+    total_profit = target_hit * 20  # $20 per target hit
+    total_loss = stop_hit * (stop_percent * 10)  # stop_percent * $10 per stop
+    net_result = total_profit - total_loss
+    net_percent = (net_result / 100) * 100  # Assuming $100 base investment
+    
+    return {
+        'target_hit': target_hit,
+        'target_hit_percent': target_hit_percent,
+        'stop_hit': stop_hit,
+        'stop_hit_percent': stop_hit_percent,
+        'total_profit': total_profit,
+        'total_loss': total_loss,
+        'net_result': net_result,
+        'net_percent': net_percent
+    }
+
+def save_stop_analysis_data(symbol, entry_price, actual_price):
+    """Stop analiz verilerini kaydeder - Ana sistemden tamamen ayrı"""
+    try:
+        if mongo_collection is None:
+            if not connect_mongodb():
+                return False
+        
+        doc_id = f"stop_analysis_{symbol}"
+        analysis_data = {
+            'entry_price': entry_price,
+            'actual_price': actual_price,
+            'timestamp': datetime.now()
+        }
+        
+        mongo_collection.update_one(
+            {"_id": doc_id},
+            {
+                "$set": {
+                    "data": analysis_data,
+                    "timestamp": datetime.now()
+                }
+            },
+            upsert=True
+        )
+        
+        return True
+        
+    except Exception as e:
+        return False
+
+async def track_stop_for_analysis(symbol, entry_price):
+    """Stop olan coinleri analiz için takip et - Ana sistemden tamamen ayrı"""
+    try:
+        # Mevcut fiyatı al
+        ticker = client.get_ticker(symbol=symbol)
+        current_price = float(ticker['lastPrice'])
+        if current_price > 0:
+            save_stop_analysis_data(symbol, entry_price, current_price)
+    except:
+        pass  # Ana sistemi etkilemesin
 
 def clear_data_by_pattern(pattern, description="veri"):
     """Regex pattern ile eşleşen verileri MongoDB'den siler"""
@@ -5048,6 +5249,9 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             await send_admin_message(message)
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
+            
+            # Stop analiz için takip et (ana sistemden tamamen ayrı)
+            await track_stop_for_analysis(symbol, entry_price)
         
         # Pozisyonu veritabanından sil - HATA DURUMUNDA TEKRAR DENE
         try:

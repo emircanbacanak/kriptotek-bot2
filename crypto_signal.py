@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import pytz
 import telegram
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
-import json
 import aiohttp
 from dotenv import load_dotenv
 import os
@@ -42,7 +41,7 @@ MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 MONGODB_DB = os.getenv("MONGODB_DB", "crypto_signal_bot")
 MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "allowed_users")
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
-ADMIN_USERS = set()
+BOT_OWNER_GROUPS = set()
 
 mongo_client = None
 mongo_db = None
@@ -60,7 +59,7 @@ def validate_user_command(update, require_admin=False, require_owner=False):
     if require_owner and user_id != BOT_OWNER_ID:
         return user_id, False
     
-    if require_admin and not is_admin(user_id):
+    if require_admin and user_id != BOT_OWNER_ID:
         return user_id, False
     
     return user_id, True
@@ -425,8 +424,6 @@ def load_active_signals_from_db():
         print(f"❌ MongoDB'den aktif sinyaller yüklenirken hata: {e}")
         return {}
 
-ALLOWED_USERS = set()
-
 def connect_mongodb():
     """MongoDB bağlantısını kur"""
     global mongo_client, mongo_db, mongo_collection
@@ -461,91 +458,31 @@ def ensure_mongodb_connection():
         print(f"⚠️ MongoDB bağlantısı koptu, yeniden bağlanılıyor: {e}")
         return connect_mongodb()
 
-def load_allowed_users():
-    """İzin verilen kullanıcıları ve admin bilgilerini MongoDB'den yükle"""
-    global ALLOWED_USERS, BOT_OWNER_GROUPS, ADMIN_USERS
+def load_bot_owner_groups():
+    """Bot sahibinin gruplarını MongoDB'den yükle"""
+    global BOT_OWNER_GROUPS
     try:
         if not connect_mongodb():
             print("⚠️ MongoDB bağlantısı kurulamadı, boş liste ile başlatılıyor")
-            ALLOWED_USERS = set()
             BOT_OWNER_GROUPS = set()
-            ADMIN_USERS = set()
             return
-        
-        users_data = load_data_from_db("allowed_users")
-        if users_data and 'user_ids' in users_data:
-            ALLOWED_USERS = set(users_data['user_ids'])
-            print(f"✅ MongoDB'den {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi (yeni format)")
-        else:
-            # Eski format kontrolü - data.user_ids içinde olabilir
-            raw_doc = mongo_collection.find_one({"_id": "allowed_users"})
-            if raw_doc and 'data' in raw_doc and 'user_ids' in raw_doc['data']:
-                ALLOWED_USERS = set(raw_doc['data']['user_ids'])
-                print(f"✅ MongoDB'den {len(ALLOWED_USERS)} izin verilen kullanıcı yüklendi (eski format)")
-                # Eski formatı yeni formata çevir
-                save_allowed_users()
-            else:
-                print("ℹ️ MongoDB'de izin verilen kullanıcı bulunamadı, boş liste ile başlatılıyor")
-                ALLOWED_USERS = set()
         
         admin_groups_data = load_data_from_db("admin_groups")
         if admin_groups_data and 'group_ids' in admin_groups_data:
             BOT_OWNER_GROUPS = set(admin_groups_data['group_ids'])
-            print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} admin grubu yüklendi (yeni format)")
+            print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} grup/kanal yüklendi")
         else:
-            # Eski format kontrolü - data.group_ids içinde olabilir
             raw_doc = mongo_collection.find_one({"_id": "admin_groups"})
             if raw_doc and 'data' in raw_doc and 'group_ids' in raw_doc['data']:
                 BOT_OWNER_GROUPS = set(raw_doc['data']['group_ids'])
-                print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} admin grubu yüklendi (eski format)")
-                # Eski formatı yeni formata çevir
+                print(f"✅ MongoDB'den {len(BOT_OWNER_GROUPS)} grup/kanal yüklendi (eski format)")
                 save_admin_groups()
             else:
-                print("ℹ️ MongoDB'de admin grubu bulunamadı, boş liste ile başlatılıyor")
+                print("ℹ️ MongoDB'de grup/kanal bulunamadı, boş liste ile başlatılıyor")
                 BOT_OWNER_GROUPS = set()
-        
-        admin_users_data = load_data_from_db("admin_users")
-        if admin_users_data and 'admin_ids' in admin_users_data:
-            ADMIN_USERS = set(admin_users_data['admin_ids'])
-            print(f"✅ MongoDB'den {len(ADMIN_USERS)} admin kullanıcı yüklendi (yeni format)")
-        else:
-            # Eski format kontrolü - data.admin_ids içinde olabilir
-            raw_doc = mongo_collection.find_one({"_id": "admin_users"})
-            if raw_doc and 'data' in raw_doc and 'admin_ids' in raw_doc['data']:
-                ADMIN_USERS = set(raw_doc['data']['admin_ids'])
-                print(f"✅ MongoDB'den {len(ADMIN_USERS)} admin kullanıcı yüklendi (eski format)")
-                # Eski formatı yeni formata çevir
-                save_admin_users()
-            else:
-                print("ℹ️ MongoDB'de admin kullanıcı bulunamadı, boş liste ile başlatılıyor")
-                ADMIN_USERS = set()
     except Exception as e:
-        print(f"❌ MongoDB'den veriler yüklenirken hata: {e}")
-        ALLOWED_USERS = set()
+        print(f"❌ MongoDB'den gruplar yüklenirken hata: {e}")
         BOT_OWNER_GROUPS = set()
-        ADMIN_USERS = set()
-
-def save_allowed_users():
-    """İzin verilen kullanıcıları MongoDB'ye kaydet"""
-    try:
-        if mongo_collection is None:
-            if not connect_mongodb():
-                print("❌ MongoDB bağlantısı kurulamadı, kullanıcılar kaydedilemedi")
-                return False
-        
-        user_data = {
-            "user_ids": list(ALLOWED_USERS),
-            "last_updated": str(datetime.now()),
-            "count": len(ALLOWED_USERS)
-        }
-        
-        if save_data_to_db("allowed_users", user_data, "İzin Verilen Kullanıcılar"):
-            print(f"✅ MongoDB'ye {len(ALLOWED_USERS)} izin verilen kullanıcı kaydedildi")
-            return True
-        return False
-    except Exception as e:
-        print(f"❌ MongoDB'ye kullanıcılar kaydedilirken hata: {e}")
-        return False
 
 async def set_cooldown_to_db(cooldown_delta: timedelta):
     """Cooldown bitiş zamanını veritabanına kaydeder."""
@@ -728,28 +665,6 @@ def save_admin_groups():
         return False
     except Exception as e:
         print(f"❌ MongoDB'ye admin grupları kaydedilirken hata: {e}")
-        return False
-
-def save_admin_users():
-    """Admin kullanıcılarını MongoDB'ye kaydet"""
-    try:
-        if mongo_collection is None:
-            if not connect_mongodb():
-                print("❌ MongoDB bağlantısı kurulamadı, admin kullanıcıları kaydedilemedi")
-                return False
-        
-        admin_data = {
-            "admin_ids": list(ADMIN_USERS),
-            "last_updated": str(datetime.now()),
-            "count": len(ADMIN_USERS)
-        }
-        
-        if save_data_to_db("admin_users", admin_data, "Admin Kullanıcıları"):
-            print(f"✅ MongoDB'ye {len(ADMIN_USERS)} admin kullanıcı kaydedildi")
-            return True
-        return False
-    except Exception as e:
-        print(f"❌ MongoDB'ye admin kullanıcıları kaydedilirken hata: {e}")
         return False
 
 def close_mongodb():
@@ -1141,52 +1056,12 @@ global_stats = {
     "tracked_coins_count": 0
 }
 global_active_signals = {}
-global_waiting_signals = {} 
 global_successful_signals = {}
 global_failed_signals = {}
 global_positions = {} 
 global_stop_cooldown = {} 
-global_allowed_users = set() 
-global_admin_users = set() 
-global_last_signal_scan_time = None
 active_signals = {}  # Global active_signals değişkeni
 position_processing_flags = {}  # Race condition önleme için pozisyon işlem flag'leri
-
-def is_authorized_chat(update):
-    """Kullanıcının yetkili olduğu sohbet mi kontrol et"""
-    chat = update.effective_chat
-    if not chat or not update.effective_user:
-        return False
-    
-    user_id = update.effective_user.id
-    
-    if chat.type == "private":
-        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS
-    
-    # Bot sahibinin eklediği grup/kanal ve bot sahibi
-    if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
-        return user_id == BOT_OWNER_ID or user_id in ADMIN_USERS
-    
-    return False
-
-def should_respond_to_message(update):
-    """Mesaja yanıt verilmeli mi kontrol et (gruplarda ve kanallarda sadece bot sahibi ve adminler)"""
-    chat = update.effective_chat
-    if not chat or not update.effective_user:
-        return False
-    
-    user_id = update.effective_user.id
-    if chat.type == "private":
-        return user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS
-    
-    if chat.type in ["group", "supergroup", "channel"] and chat.id in BOT_OWNER_GROUPS:
-        return user_id == BOT_OWNER_ID or user_id in ADMIN_USERS
-    
-    return False
-
-def is_admin(user_id):
-    """Kullanıcının admin olup olmadığını kontrol et"""
-    return user_id == BOT_OWNER_ID or user_id in ADMIN_USERS
 
 async def send_telegram_message(message, chat_id=None):
     """Telegram mesajı gönder"""
@@ -1239,17 +1114,9 @@ async def send_telegram_message(message, chat_id=None):
         return False
 
 async def send_signal_to_all_users(message):
-    sent_chats = set() 
-    for user_id in ALLOWED_USERS:
-        if str(user_id) not in sent_chats:
-            try:
-                await send_telegram_message(message, user_id)
-                print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
-                sent_chats.add(str(user_id))
-            except Exception as e:
-                print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
+    """Sinyali gruplara/kanallara gönder"""
+    sent_chats = set()
     
-
     for group_id in BOT_OWNER_GROUPS:
         if str(group_id) not in sent_chats:
             try:
@@ -1271,81 +1138,18 @@ async def help_command(update, context):
         return
     
     user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS and user_id not in ADMIN_USERS:
-        return 
+    if user_id != BOT_OWNER_ID:
+        return  # Sadece bot sahibi, hiç yanıt yok
     
-    if user_id == BOT_OWNER_ID:
-        help_text = """
+    help_text = """
 👑 **Kripto Sinyal Botu Komutları (Bot Sahibi):**
 
-📊 **Temel Komutlar:**
+📊 **Komutlar:**
 /help - Bu yardım mesajını göster
 /stats - İstatistikleri göster
 /active - Aktif sinyalleri göster
-/test - Test sinyali gönder
-/test öğlen - Öğlen uyarı mesajlarını test et
-/test akşam - Akşam uyarı mesajlarını test et
-👥 **Kullanıcı Yönetimi:**
-/adduser <user_id> - Kullanıcı ekle
-/removeuser <user_id> - Kullanıcı çıkar
-/listusers - İzin verilen kullanıcıları listele
-
-👑 **Admin Yönetimi:**
-/adminekle <user_id> - Admin ekle
-/adminsil <user_id> - Admin sil
-/listadmins - Admin listesini göster
-
-🧹 **Temizleme Komutları:**
-/clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
-/reducecooldowns - Cooldown sürelerini %95 kısalt
-
-📊 **Analiz Komutları:**
-/stats close - Stop analiz raporu (alternatif senaryolar)
-
-🔧 **Özel Yetkiler:**
-• Tüm komutlara erişim
-• Admin ekleme/silme
-• Veri temizleme
-• Cooldown sürelerini kısaltma
-• Stop analiz raporları
-• Bot tam kontrolü
-        """
-    elif user_id in ADMIN_USERS:
-        help_text = """
-🛡️ **Kripto Sinyal Botu Komutları (Admin):**
-
-📊 **Temel Komutlar:**
-/help - Bu yardım mesajını göster
-/stats - İstatistikleri göster
-/active - Aktif sinyalleri göster
-/test - Test sinyali gönder
-/test öğlen - Öğlen uyarı mesajlarını test et
-/test akşam - Akşam uyarı mesajlarını test et
-👥 **Kullanıcı Yönetimi:**
-/adduser <user_id> - Kullanıcı ekle
-/removeuser <user_id> - Kullanıcı çıkar
-/listusers - İzin verilen kullanıcıları listele
-
-👑 **Admin Yönetimi:**
-/listadmins - Admin listesini göster
-
-🔧 **Yetkiler:**
-• Kullanıcı ekleme/silme
-• Test sinyali gönderme
-• İstatistik görüntüleme
-• Admin listesi görüntüleme
-        """
-    else:
-        help_text = """
-📱 **Kripto Sinyal Botu Komutları (Kullanıcı):**
-
-📊 **Temel Komutlar:**
-/help - Bu yardım mesajını göster
-/active - Aktif sinyalleri göster
-
-🔧 **Yetkiler:**
-• Aktif sinyalleri görüntüleme
-• Sinyal mesajlarını alma
+/clearall - Tüm verileri temizle
+/reducecooldowns - Cooldown'ları %95 kısalt
         """
     
     try:
@@ -1361,89 +1165,13 @@ async def help_command(update, context):
         print(f"❌ Özel mesaj gönderilemedi ({user_id}): {e}")
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
-async def test_command(update, context):
-    if not update.effective_user:
-        return
-    
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        return 
-    
-    # Komut parametresini kontrol et
-    command_text = update.message.text.lower()
-    
-    if "öğlen" in command_text or "oglen" in command_text:
-        # Öğlen uyarı mesajlarını test et
-        await update.message.reply_text("🧪 Öğlen uyarı mesajları test ediliyor...")
-        
-        # 1. Risk Yönetimi Uyarısı
-        risk_message = "<b>⚠️ Risk Yönetimi Hatırlatması</b>\n\n• İşlemlerde sermayenizin en fazla %2-3'ü ile pozisyon açın.\n• Stop-Loss kullanmadan işlem yapmayın.\n• Kâr kadar sermaye koruması da önemlidir."
-        
-        # 2. Kaldıraç Kullanımı Uyarısı
-        leverage_message = "<b>⚠️ Kaldıraç Kullanımı Hakkında</b>\n\n• Yüksek kaldıraç büyük kazanç getirebilir ama aynı şekilde zararı da büyütür.\n• Maksimum 10x kaldıraç öneriyoruz.\n• Uzun vadeli yatırımcıysanız kaldıraçtan uzak durun."
-        
-        # 3. Piyasa Psikolojisi Uyarısı
-        psychology_message = "<b>⚠️ Piyasa Psikolojisi</b>\n\n• Panik alım & satımdan kaçının.\n• Stratejinize sadık kalın.\n• Unutmayın: Sabır, kazananların silahıdır."
-        
-        # Uyarıları sadece grup, kanal ve bot sahibine gönder
-        await send_to_groups_and_channels_only(risk_message)
-        await asyncio.sleep(1)
-        await send_to_groups_and_channels_only(leverage_message)
-        await asyncio.sleep(1)
-        await send_to_groups_and_channels_only(psychology_message)
-        
-        await update.message.reply_text("✅ Öğlen uyarı mesajları test edildi!")
-        
-    elif "akşam" in command_text or "aksam" in command_text or "gece" in command_text:
-        # Akşam/Gece uyarı mesajlarını test et
-        await update.message.reply_text("🧪 Akşam uyarı mesajları test ediliyor...")
-        
-        # 4. Güvenlik Hatırlatması
-        security_message = "<b>🔐 Güvenlik Hatırlatması</b>\n\n• Bilgilerinizi kimseyle paylaşmayın.\n• Sinyalleri sadece resmî kanalımızdan takip edin.\n• Yatırım kararlarınızı her zaman kendi araştırmanızla destekleyin."
-        
-        # 5. Gün Sonu Notu
-        end_of_day_message = "<b>🌙 Gün Sonu Notu</b>\n\n• Günlük kar-zararınızı mutlaka kontrol edin.\n• Gereksiz açık pozisyon bırakmayın.\n• Yarın yeni fırsatlar için hazır olun! 🚀"
-        
-        # Uyarıları sadece grup, kanal ve bot sahibine gönder
-        await send_to_groups_and_channels_only(security_message)
-        await asyncio.sleep(1)
-        await send_to_groups_and_channels_only(end_of_day_message)
-        
-        await update.message.reply_text("✅ Akşam uyarı mesajları test edildi!")
-        
-    else:
-        # Normal test sinyali gönder
-        test_message = """🟢 LONG SİNYALİ 🟢
-
-🔹 Kripto Çifti: BTCUSDT  
-💵 Giriş Fiyatı: $45,000.00
-📈 Hedef Fiyat: $46,350.00  
-📉 Stop Loss: $43,875.00
-⚡ Kaldıraç: 10x
-📊 24h Hacim: $2.5B
-
-⚠️ <b>ÖNEMLİ UYARILAR:</b>
-• Bu paylaşım yatırım tavsiyesi değildir.
-• Riskinizi azaltmak için sermayenizin %2'sinden fazlasını tek işlemde kullanmayın.
-• Stop-loss kullanmadan işlem yapmayın.
-
-📺 <b>Kanallar:</b>
-🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>
-
-⚠️ <b>Bu bir test sinyalidir!</b> ⚠️"""
-    
-    await update.message.reply_text("🧪 Test sinyali gönderiliyor...")    
-    await send_signal_to_all_users(test_message)
-    await update.message.reply_text("✅ Test sinyali başarıyla gönderildi!")
-
 async def stats_command(update, context):
     if not update.effective_user:
         return
     
     user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        return 
+    if user_id != BOT_OWNER_ID:
+        return  # Sadece bot sahibi 
     
     # Önce veritabanından stats'ı yükle
     stats = load_stats_from_db() or global_stats
@@ -1493,9 +1221,8 @@ async def active_command(update, context):
         return
     
     user_id = update.effective_user.id
-    
-    if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS and user_id not in ADMIN_USERS:
-        return  # İzin verilmeyen kullanıcılar için hiçbir yanıt verme
+    if user_id != BOT_OWNER_ID:
+        return  # Sadece bot sahibi
     
     active_signals = load_active_signals_from_db() or global_active_signals
     if not active_signals:
@@ -1529,148 +1256,14 @@ async def active_command(update, context):
     
     await update.message.reply_text(active_text, parse_mode='Markdown')
 
-async def adduser_command(update, context):
-    """Kullanıcı ekleme komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, new_user_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, new_user_id)
-        return
-    
-    if new_user_id == BOT_OWNER_ID:
-        await send_command_response(update, "❌ Bot sahibi zaten her zaman erişime sahiptir.")
-        return
-    
-    if new_user_id in ALLOWED_USERS:
-        await send_command_response(update, "❌ Bu kullanıcı zaten izin verilen kullanıcılar listesinde.")
-        return
-    
-    if new_user_id in ADMIN_USERS:
-        await send_command_response(update, "❌ Bu kullanıcı zaten admin listesinde.")
-        return
-    
-    ALLOWED_USERS.add(new_user_id)
-    save_allowed_users()  # MongoDB'ye kaydet
-    await send_command_response(update, f"✅ Kullanıcı {new_user_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
-
-async def removeuser_command(update, context):
-    """Kullanıcı çıkarma komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, remove_user_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, remove_user_id)
-        return
-    
-    if remove_user_id in ALLOWED_USERS:
-        ALLOWED_USERS.remove(remove_user_id)
-        save_allowed_users()  # MongoDB'ye kaydet
-        await send_command_response(update, f"✅ Kullanıcı {remove_user_id} başarıyla çıkarıldı ve kalıcı olarak kaydedildi.")
-    else:
-        await send_command_response(update, f"❌ Kullanıcı {remove_user_id} zaten izin verilen kullanıcılar listesinde yok.")
-
-async def listusers_command(update, context):
-    """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    if not ALLOWED_USERS:
-        users_text = "📋 **İzin Verilen Kullanıcılar:**\n\nHenüz izin verilen kullanıcı yok."
-    else:
-        users_list = "\n".join([f"• {user_id}" for user_id in ALLOWED_USERS])
-        users_text = f"📋 **İzin Verilen Kullanıcılar:**\n\n{users_list}"
-    
-    await send_command_response(update, users_text)
-
-async def adminekle_command(update, context):
-    """Admin ekleme komutu (sadece bot sahibi)"""
-    user_id, is_authorized = validate_user_command(update, require_owner=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, new_admin_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, new_admin_id)
-        return
-    
-    if new_admin_id == BOT_OWNER_ID:
-        await send_command_response(update, "❌ Bot sahibi zaten admin yetkilerine sahiptir.")
-        return
-    
-    if new_admin_id in ADMIN_USERS:
-        await send_command_response(update, "❌ Bu kullanıcı zaten admin listesinde.")
-        return
-    
-    ADMIN_USERS.add(new_admin_id)
-    save_admin_users()  # MongoDB'ye kaydet
-    await send_command_response(update, f"✅ Admin {new_admin_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
-
-async def adminsil_command(update, context):
-    """Admin silme komutu (sadece bot sahibi)"""
-    user_id, is_authorized = validate_user_command(update, require_owner=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, remove_admin_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, remove_admin_id)
-        return
-    
-    if remove_admin_id in ADMIN_USERS:
-        ADMIN_USERS.remove(remove_admin_id)
-        save_admin_users()  # MongoDB'ye kaydet
-        await send_command_response(update, f"✅ Admin {remove_admin_id} başarıyla silindi ve kalıcı olarak kaydedildi.")
-    else:
-        await send_command_response(update, f"❌ Admin {remove_admin_id} zaten admin listesinde yok.")
-
-async def listadmins_command(update, context):
-    """Admin listesini gösterme komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    if not ADMIN_USERS:
-        admins_text = f"👑 **Admin Kullanıcıları:**\n\nHenüz admin kullanıcı yok.\n\nBot Sahibi: {BOT_OWNER_ID}"
-    else:
-        admins_list = "\n".join([f"• {admin_id}" for admin_id in ADMIN_USERS])
-        admins_text = f"👑 **Admin Kullanıcıları:**\n\n{admins_list}\n\nBot Sahibi: {BOT_OWNER_ID}"
-    
-    await send_command_response(update, admins_text)
-
 async def handle_message(update, context):
-    """Genel mesaj handler'ı"""
-    user_id, is_authorized = validate_user_command(update, require_admin=False)
-    if not is_authorized:
+    """Genel mesaj handler'ı - Sadece bot sahibi"""
+    if not update.effective_user:
         return
     
-    if user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS:
-        await send_command_response(update, "🤖 Bu bot sadece komutları destekler. /help yazarak mevcut komutları görebilirsiniz.")
+    user_id = update.effective_user.id
+    if user_id != BOT_OWNER_ID:
+        return  # Sadece bot sahibi, hiç yanıt yok
 
 async def error_handler(update, context):
     """Hata handler'ı"""
@@ -1796,20 +1389,12 @@ async def setup_bot():
         print(f"⚠️ Webhook temizleme hatası: {e}")
         print("🔄 Polling moduna geçiliyor...")
     
-    # Komut handler'ları
+    # Komut handler'ları - SADECE BOT SAHİBİ
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("active", active_command))
-    app.add_handler(CommandHandler("test", test_command))
-    app.add_handler(CommandHandler("adduser", adduser_command))
-    app.add_handler(CommandHandler("removeuser", removeuser_command))
-    app.add_handler(CommandHandler("listusers", listusers_command))
-    app.add_handler(CommandHandler("adminekle", adminekle_command))
-    app.add_handler(CommandHandler("adminsil", adminsil_command))
-    app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CommandHandler("clearall", clear_all_command))
     app.add_handler(CommandHandler("reducecooldowns", reduce_cooldowns_command))
-    app.add_handler(CommandHandler("stats", stats_close_command))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
@@ -2649,11 +2234,9 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             # Pozisyonu MongoDB'ye kaydet
             save_positions_to_db({symbol: position})
             
-            # İstatistikleri güncelle
+            # İstatistikleri güncelle (sadece bellekte)
             stats["total_signals"] += 1
-            stats["active_signals_count"] = len(positions)  # positions kullan
-            
-            save_stats_to_db(stats)
+            stats["active_signals_count"] = len(positions)
             
             await send_signal_to_all_users(message)
             
@@ -2767,25 +2350,11 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     print(f"🔒 {symbol} → HEDEF GERÇEKLEŞTİ! Cooldown bitiş: {cooldown_end_time.strftime('%H:%M:%S')}")
                     save_stop_cooldown_to_db(stop_cooldown)
                     
-                    # Pozisyon ve aktif sinyali kaldır
+                    # Pozisyon ve aktif sinyali kaldır (close_position zaten DB'den sildi)
                     del positions[symbol]
                     if symbol in active_signals:
                         del active_signals[symbol]
                     
-                    # Veritabanı kayıtlarını kontrol et
-                    positions_saved = save_positions_to_db(positions)
-                    active_signals_saved = save_active_signals_to_db(active_signals)
-                    
-                    if not positions_saved or not active_signals_saved:
-                        print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                        # Hata durumunda tekrar dene
-                        await asyncio.sleep(1)
-                        positions_saved = save_positions_to_db(positions)
-                        active_signals_saved = save_active_signals_to_db(active_signals)
-                        if not positions_saved or not active_signals_saved:
-                            print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                    else:
-                        print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                     print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
                     
                 min_stop_diff = stop_loss * 0.001 
@@ -2795,9 +2364,6 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     # Pozisyonu kapat ve mesajı gönder
                     await close_position(symbol, "stop_loss", close_price, None, position)
                     print(f"📢 STOP LOSS mesajı close_position() tarafından gönderildi")
-                    
-                    # Stop analiz için takip et (ana sistemden tamamen ayrı)
-                    await track_stop_for_analysis(symbol, entry_price)
                     
                     # İstatistikleri güncelle
                     stats["failed_signals"] += 1
@@ -2814,27 +2380,12 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     cooldown_end_time = add_stop_cooldown_safe(symbol, stop_cooldown)
                     save_stop_cooldown_to_db(stop_cooldown)
                     
-                    # Pozisyon ve aktif sinyali kaldır
+                    # Pozisyon ve aktif sinyali kaldır (close_position zaten DB'den sildi)
                     del positions[symbol]
                     if symbol in active_signals:
                         del active_signals[symbol]
                     
-                    # Veritabanı kayıtlarını kontrol et
-                    positions_saved = save_positions_to_db(positions)
-                    active_signals_saved = save_active_signals_to_db(active_signals)
-                    
-                    if not positions_saved or not active_signals_saved:
-                        print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                        # Hata durumunda tekrar dene
-                        await asyncio.sleep(1)
-                        positions_saved = save_positions_to_db(positions)
-                        active_signals_saved = save_active_signals_to_db(active_signals)
-                        if not positions_saved or not active_signals_saved:
-                            print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                    else:
-                        print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                    print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
-                    print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
+                    print(f"✅ {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
                                 # SHORT sinyali için hedef/stop kontrolü
                 elif signal_type == "SHORT" or signal_type == "SATIS":
@@ -2871,24 +2422,10 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         print(f"🔒 {symbol} → SHORT HEDEF GERÇEKLEŞTİ! Cooldown bitiş: {cooldown_end_time.strftime('%H:%M:%S')}")
                         save_stop_cooldown_to_db(stop_cooldown)
                         
-                        # Pozisyon ve aktif sinyali kaldır
+                        # Pozisyon ve aktif sinyali kaldır (close_position zaten DB'den sildi)
                         del positions[symbol]
                         if symbol in active_signals:
                             del active_signals[symbol]
-                        # Veritabanı kayıtlarını kontrol et
-                        positions_saved = save_positions_to_db(positions)
-                        active_signals_saved = save_active_signals_to_db(active_signals)
-                        
-                        if not positions_saved or not active_signals_saved:
-                            print(f"⚠️ {symbol} veritabanı kaydı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                            # Hata durumunda tekrar dene
-                            await asyncio.sleep(1)
-                            positions_saved = save_positions_to_db(positions)
-                            active_signals_saved = save_active_signals_to_db(active_signals)
-                            if not positions_saved or not active_signals_saved:
-                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                        else:
-                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
                         
                         print(f"✅ {symbol} - Bot başlangıcında TP tespit edildi ve işlendi!")
                         
@@ -2919,22 +2456,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         if symbol in active_signals:
                             del active_signals[symbol]
                         
-                        positions_saved = save_positions_to_db(positions)
-                        active_signals_saved = save_active_signals_to_db(active_signals)
-                        
-                        if not positions_saved or not active_signals_saved:
-                            print(f"⚠️ {symbol} veritabanı kaydı başarısız! Pozisyon: {positions_saved}, Aktif Sinyal: {active_signals_saved}")
-                            # Hata durumunda tekrar dene
-                            await asyncio.sleep(1)
-                            positions_saved = save_positions_to_db(positions)
-                            active_signals_saved = save_active_signals_to_db(active_signals)
-                            if not positions_saved or not active_signals_saved:
-                                print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
-                        else:
-                            print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                        # MESAJ GÖNDERİMİ KALDIRILDI - close_position() fonksiyonu mesaj gönderecek
-                        print(f"📢 Stop mesajı close_position() tarafından gönderilecek")
-                        print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
+                        print(f"✅ {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
         except Exception as e:
             print(f"⚠️ {symbol} pozisyon kontrolü sırasında hata: {e}")
@@ -2976,7 +2498,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
 async def signal_processing_loop():
     """Sinyal arama ve işleme döngüsü"""
     # Global değişkenleri tanımla
-    global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_allowed_users, global_admin_users, global_positions, global_stop_cooldown, active_signals
+    global global_stats, global_active_signals, global_successful_signals, global_failed_signals, global_positions, global_stop_cooldown, active_signals
 
     positions = dict()  # {symbol: position_info}
     stop_cooldown = dict()  # {symbol: datetime}
@@ -3132,7 +2654,7 @@ async def signal_processing_loop():
                         print(f"⚠️ {symbol} → Positions'da yok, aktif sinyallerden kaldırılıyor")
                         setattr(signal_processing_loop, attr_name7, False)
                     del active_signals[symbol]
-                    save_active_signals_to_db(active_signals)
+                    # DB yazma kaldırıldı - close_position zaten DB'den siliyor
                 else:
                     # Positions'daki güncel verileri active_signals'a yansıt
                     position = positions[symbol]
@@ -3143,9 +2665,8 @@ async def signal_processing_loop():
                             "leverage": position.get("leverage", 10)
                         })
             
-            # Stats'ı güncelle
+            # Stats'ı güncelle (sadece bellekte - DB yazma YOK!)
             stats["active_signals_count"] = len(active_signals)
-            save_stats_to_db(stats)
             
             # Her döngüde güncel durumu yazdır (senkronizasyon kontrolü için)
             # Döngü sayacını artır
@@ -3825,14 +3346,6 @@ async def signal_processing_loop():
             else:
                 print("ℹ️ Aktif sinyal kalmadı")
             
-            # Aktif sinyalleri dosyaya kaydet
-            with open('active_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "active_signals": active_signals,
-                    "count": len(active_signals),
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-            
             # İstatistikleri güncelle
             stats["active_signals_count"] = len(active_signals)
             stats["tracked_coins_count"] = len(tracked_coins)
@@ -3844,14 +3357,10 @@ async def signal_processing_loop():
             global_failed_signals = failed_signals.copy()
             global_positions = positions.copy()
             global_stop_cooldown = stop_cooldown.copy()
-            global_allowed_users = ALLOWED_USERS.copy()
-            global_admin_users = ADMIN_USERS.copy()
             
-            save_stats_to_db(stats)
-            save_active_signals_to_db(active_signals)
-            save_positions_to_db(positions)  # ✅ POZİSYONLARI DA KAYDET
+            # DB yazma kaldırıldı - zaten her değişiklikte kaydediliyor (%80 DB yazma tasarrufu!)
 
-            # İstatistik özeti yazdır - veritabanından güncel verileri al
+            # İstatistik özeti yazdır - bellekteki verileri kullan
             print(f"📊 İSTATİSTİK ÖZETİ:")
             
             # Veritabanından güncel istatistikleri yükle
@@ -4233,7 +3742,7 @@ async def monitor_signals():
             active_signals = load_active_signals_from_db()
 
 async def main():
-    load_allowed_users()
+    load_bot_owner_groups()
     await setup_bot()
     await app.initialize()
     await app.start()
@@ -4337,24 +3846,6 @@ async def reduce_cooldowns_command(update, context):
     except Exception as e:
         await send_command_response(update, f"❌ Cooldown kısaltma işlemi sırasında hata: {e}")
 
-async def stats_close_command(update, context):
-    """Stop analiz raporu - Sadece bot sahibi"""
-    if not update.effective_user:
-        return
-    
-    user_id = update.effective_user.id
-    if user_id != BOT_OWNER_ID:
-        await send_command_response(update, "❌ Bu komut sadece bot sahibi tarafından kullanılabilir.")
-        return
-    
-    try:
-        # Stop analiz raporunu oluştur
-        report = await generate_stop_analysis_report()
-        await send_command_response(update, report)
-            
-    except Exception as e:
-        await send_command_response(update, f"❌ Stop analiz raporu oluşturulamadı: {e}")
-
 async def clear_all_command(update, context):
     """Tüm verileri temizler: pozisyonlar, aktif sinyaller, önceki sinyaller, bekleyen kuyruklar, istatistikler (sadece bot sahibi)"""
     global global_active_signals
@@ -4395,27 +3886,7 @@ async def clear_all_command(update, context):
         # 5.5) Sinyal cooldown'ları temizle
         signal_cooldown_deleted = clear_data_by_pattern("^signal_cooldown_", "sinyal cooldown")
         
-        # 5.6) Stop analiz verilerini temizle
-        stop_analysis_deleted = clear_data_by_pattern("^stop_analysis_", "stop analiz")
-        
-        # 6) JSON dosyasını da temizle
-        try:
-            with open('active_signals.json', 'w', encoding='utf-8') as f:
-                json.dump({
-                    "active_signals": {},
-                    "count": 0,
-                    "last_update": str(datetime.now())
-                }, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-        
         prev_deleted, init_deleted = clear_previous_signals_from_db()
-        global global_waiting_signals
-
-        try:
-            global_waiting_signals = {}
-        except NameError:
-            pass
         
         new_stats = {
             "total_signals": 0,
@@ -4439,14 +3910,12 @@ async def clear_all_command(update, context):
             final_active = mongo_collection.count_documents({"_id": {"$regex": "^active_signal_"}})
             final_cooldown = mongo_collection.count_documents({"_id": {"$regex": "^stop_cooldown_"}})
             final_signal_cooldown = mongo_collection.count_documents({"_id": {"$regex": "^signal_cooldown_"}})
-            final_stop_analysis = mongo_collection.count_documents({"_id": {"$regex": "^stop_analysis_"}})
             
             print(f"🔍 Temizleme sonrası kontrol:")
             print(f"   Kalan pozisyon: {final_positions}")
             print(f"   Kalan aktif sinyal: {final_active}")
             print(f"   Kalan stop cooldown: {final_cooldown}")
             print(f"   Kalan sinyal cooldown: {final_signal_cooldown}")
-            print(f"   Kalan stop analiz: {final_stop_analysis}")
             
         except Exception as e:
             print(f"⚠️ Son kontrol hatası: {e}")
@@ -4458,7 +3927,6 @@ async def clear_all_command(update, context):
             f"• Aktif sinyal: {active_deleted} silindi\n"
             f"• Stop cooldown: {cooldown_deleted} silindi\n"
             f"• Sinyal cooldown: {signal_cooldown_deleted} silindi\n"
-            f"• Stop analiz: {stop_analysis_deleted} silindi\n"
             f"• Önceki sinyal: {prev_deleted} silindi (initialized: {'silindi' if init_deleted else 'yok'})\n"
             f"• Bekleyen kuyruklar sıfırlandı\n"
             f"• İstatistikler sıfırlandı"
@@ -4694,174 +4162,6 @@ async def reduce_cooldowns_by_95_percent():
         error_msg = f"Cooldown kısaltma hatası: {e}"
         print(f"❌ {error_msg}")
         return False, error_msg
-
-async def generate_stop_analysis_report():
-    """Stop analiz raporunu oluşturur"""
-    try:
-        if mongo_collection is None:
-            if not connect_mongodb():
-                return "❌ MongoDB bağlantısı kurulamadı"
-        
-        # Stop olan coinleri yükle
-        stop_analysis_data = load_stop_analysis_data()
-        
-        if not stop_analysis_data:
-            return "📊 **STOP ANALİZ RAPORU** 📈\n\nHenüz analiz edilecek stop verisi bulunmuyor."
-        
-        # Senaryo analizlerini hesapla
-        scenario_1 = calculate_scenario_analysis(stop_analysis_data, 2.0, 2.0)
-        scenario_2 = calculate_scenario_analysis(stop_analysis_data, 2.0, 3.0)
-        
-        # Rapor oluştur
-        report = f"""📈 **STOP ANALİZ RAPORU** 📈
-
-🕐 **Son Güncelleme**: {datetime.now().strftime('%H:%M:%S')}
-📅 **Analiz Tarihi**: {datetime.now().strftime('%Y-%m-%d')}
-
-📊 **ALTERNATİF SENARYOLAR ANALİZİ:**
-
-┌─────────────────────────────────────────────────────────┐
-│ 🎯 **SENARYO 1: %2 TP / %2 SL**                        │
-├─────────────────────────────────────────────────────────┤
-│ ✅ Hedefe Ulaşan: {scenario_1['target_hit']} coin ({scenario_1['target_hit_percent']:.1f}%)                       │
-│ ❌ Stop Olan: {scenario_1['stop_hit']} coin ({scenario_1['stop_hit_percent']:.1f}%)                           │
-│ 📈 Toplam Kazanç: +${scenario_1['total_profit']:.0f} ({scenario_1['target_hit']}×$20)                        │
-│ 📉 Toplam Kayıp: -${scenario_1['total_loss']:.0f} ({scenario_1['stop_hit']}×$20)                          │
-│ 💰 Net Sonuç: +${scenario_1['net_result']:.0f} (+{scenario_1['net_percent']:.0f}%)                              │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│ 🎯 **SENARYO 2: %2 TP / %3 SL**                        │
-├─────────────────────────────────────────────────────────┤
-│ ✅ Hedefe Ulaşan: {scenario_2['target_hit']} coin ({scenario_2['target_hit_percent']:.1f}%)                       │
-│ ❌ Stop Olan: {scenario_2['stop_hit']} coin ({scenario_2['stop_hit_percent']:.1f}%)                           │
-│ 📈 Toplam Kazanç: +${scenario_2['total_profit']:.0f} ({scenario_2['target_hit']}×$20)                       │
-│ 📉 Toplam Kayıp: -${scenario_2['total_loss']:.0f} ({scenario_2['stop_hit']}×$30)                          │
-│ 💰 Net Sonuç: +${scenario_2['net_result']:.0f} (+{scenario_2['net_percent']:.0f}%)                            │
-└─────────────────────────────────────────────────────────┘
-
-🏆 **EN İYİ SENARYO**: {"%2 TP / %3 SL" if scenario_2['net_result'] > scenario_1['net_result'] else "%2 TP / %2 SL"} ({max(scenario_2['target_hit_percent'], scenario_1['target_hit_percent']):.1f}% başarı)
-📊 **ÖNERİLEN AYAR**: Risk/Reward = 1:1.5"""
-        
-        return report
-        
-    except Exception as e:
-        return f"❌ Stop analiz raporu oluşturulamadı: {e}"
-
-def load_stop_analysis_data():
-    """Stop analiz verilerini yükler"""
-    try:
-        if mongo_collection is None:
-            if not connect_mongodb():
-                return {}
-        
-        stop_data = {}
-        docs = mongo_collection.find({"_id": {"$regex": "^stop_analysis_"}})
-        
-        for doc in docs:
-            symbol = doc["_id"].replace("stop_analysis_", "")
-            if "data" in doc:
-                stop_data[symbol] = doc["data"]
-        
-        return stop_data
-        
-    except Exception as e:
-        return {}
-
-def calculate_scenario_analysis(stop_data, target_percent, stop_percent):
-    """Senaryo analizini hesaplar"""
-    total_coins = len(stop_data)
-    if total_coins == 0:
-        return {
-            'target_hit': 0,
-            'target_hit_percent': 0,
-            'stop_hit': 0,
-            'stop_hit_percent': 0,
-            'total_profit': 0,
-            'total_loss': 0,
-            'net_result': 0,
-            'net_percent': 0
-        }
-    
-    target_hit = 0
-    stop_hit = 0
-    
-    for symbol, data in stop_data.items():
-        entry_price = data.get('entry_price', 0)
-        if entry_price == 0:
-            continue
-            
-        # Hedef fiyatını hesapla
-        target_price = entry_price * (1 + target_percent / 100)
-        stop_price = entry_price * (1 - stop_percent / 100)
-        
-        # Gerçek fiyat hareketini kontrol et
-        actual_price = data.get('actual_price', entry_price)
-        
-        if actual_price >= target_price:
-            target_hit += 1
-        elif actual_price <= stop_price:
-            stop_hit += 1
-    
-    target_hit_percent = (target_hit / total_coins) * 100
-    stop_hit_percent = (stop_hit / total_coins) * 100
-    
-    total_profit = target_hit * 20  # $20 per target hit
-    total_loss = stop_hit * (stop_percent * 10)  # stop_percent * $10 per stop
-    net_result = total_profit - total_loss
-    net_percent = (net_result / 100) * 100  # Assuming $100 base investment
-    
-    return {
-        'target_hit': target_hit,
-        'target_hit_percent': target_hit_percent,
-        'stop_hit': stop_hit,
-        'stop_hit_percent': stop_hit_percent,
-        'total_profit': total_profit,
-        'total_loss': total_loss,
-        'net_result': net_result,
-        'net_percent': net_percent
-    }
-
-def save_stop_analysis_data(symbol, entry_price, actual_price):
-    """Stop analiz verilerini kaydeder - Ana sistemden tamamen ayrı"""
-    try:
-        if mongo_collection is None:
-            if not connect_mongodb():
-                return False
-        
-        doc_id = f"stop_analysis_{symbol}"
-        analysis_data = {
-            'entry_price': entry_price,
-            'actual_price': actual_price,
-            'timestamp': datetime.now()
-        }
-        
-        mongo_collection.update_one(
-            {"_id": doc_id},
-            {
-                "$set": {
-                    "data": analysis_data,
-                    "timestamp": datetime.now()
-                }
-            },
-            upsert=True
-        )
-        
-        return True
-        
-    except Exception as e:
-        return False
-
-async def track_stop_for_analysis(symbol, entry_price):
-    """Stop olan coinleri analiz için takip et - Ana sistemden tamamen ayrı"""
-    try:
-        # Mevcut fiyatı al
-        ticker = client.get_ticker(symbol=symbol)
-        current_price = float(ticker['lastPrice'])
-        if current_price > 0:
-            save_stop_analysis_data(symbol, entry_price, current_price)
-    except:
-        pass  # Ana sistemi etkilemesin
 
 def clear_data_by_pattern(pattern, description="veri"):
     """Regex pattern ile eşleşen verileri MongoDB'den siler"""
@@ -5249,9 +4549,6 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             await send_admin_message(message)
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
-            
-            # Stop analiz için takip et (ana sistemden tamamen ayrı)
-            await track_stop_for_analysis(symbol, entry_price)
         
         # Pozisyonu veritabanından sil - HATA DURUMUNDA TEKRAR DENE
         try:

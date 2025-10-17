@@ -2040,6 +2040,23 @@ async def async_get_historical_data(symbol, interval, lookback):
     df['open'] = df['open'].astype(float)
     return df
 
+async def fetch_futures_exchange_info():
+    """Non-blocking fetch of Binance Futures exchangeInfo."""
+    url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+    connector = aiohttp.TCPConnector(limit=20)
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        return await api_request_with_retry(session, url, ssl=False)
+
+async def fetch_futures_24h(symbol=None):
+    """Non-blocking fetch of 24h stats. If symbol is None, returns list for all symbols."""
+    base = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+    url = f"{base}?symbol={symbol}" if symbol else base
+    connector = aiohttp.TCPConnector(limit=40)
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        return await api_request_with_retry(session, url, ssl=False)
+
 def calculate_full_pine_signals(df, timeframe):
     is_higher_tf = timeframe in ['1d', '4h', '1w']
     is_weekly = timeframe == '1w'
@@ -2309,7 +2326,7 @@ def calculate_full_pine_signals(df, timeframe):
     return df
 
 async def get_active_high_volume_usdt_pairs(top_n=50, stop_cooldown=None):
-    futures_exchange_info = client.futures_exchange_info()
+    futures_exchange_info = await fetch_futures_exchange_info()
     
     futures_usdt_pairs = set()
     for symbol in futures_exchange_info['symbols']:
@@ -2321,7 +2338,7 @@ async def get_active_high_volume_usdt_pairs(top_n=50, stop_cooldown=None):
             futures_usdt_pairs.add(symbol['symbol'])
 
     # Sadece USDT çiftlerinin ticker'larını al
-    futures_tickers = client.futures_ticker()
+    futures_tickers = await fetch_futures_24h()
     
     high_volume_pairs = []
     for ticker in futures_tickers:
@@ -2518,7 +2535,7 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         
         # Fiyat ve hacim bilgilerini al
         try:
-            ticker_data = client.futures_ticker(symbol=symbol)
+            ticker_data = await fetch_futures_24h(symbol)
             
             # API bazen liste döndürüyor, bazen dict
             if isinstance(ticker_data, list):
@@ -3372,18 +3389,18 @@ async def signal_processing_loop():
                             reverse=True
                         )
                         
-                        # En yüksek hacimli sinyali seç ve pending_signals'a ekle
+                        # En yüksek hacimli sinyali seç ve anında gönder
                         best_signal = sorted_regular_signals[0]
                         symbol, signal_data = best_signal
                         volume = volumes.get(symbol, 0)
-                        
-                        pending_signals[symbol] = {
-                            'signal_data': signal_data,
-                            'volume': volume,
-                            'batch_num': batch_num + 1
-                        }
-                        
                         print(f"🏆 Grup {batch_num + 1} en iyi normal sinyal: {symbol} (Hacim: {volume:,.0f})")
+                        
+                        # Sinyali hemen işle/gönder
+                        await process_selected_signal(signal_data, positions, active_signals, stats)
+                        processed_signals_in_loop += 1
+                        
+                        # Aynı sembol için tekrar spam'ı önlemek adına kısa cooldown uygula
+                        await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
                 else:
                     print(f"📊 Grup {batch_num + 1}: Sinyal bulunamadı")
                 
@@ -3799,7 +3816,7 @@ async def signal_processing_loop():
                         entry_price = active_signals[symbol].get("entry_price_float", 0)
                         
                         try:
-                            ticker = client.futures_ticker(symbol=symbol)
+                            ticker = await fetch_futures_24h(symbol)
                             current_price = float(ticker['lastPrice'])
                         except Exception as e:
                             current_price = active_signals[symbol].get("current_price_float", 0)
@@ -3992,7 +4009,7 @@ async def monitor_signals():
                         continue
 
                     try:
-                        ticker = client.futures_ticker(symbol=symbol)
+                        ticker = await fetch_futures_24h(symbol)
                         current_price = float(ticker['lastPrice'])
                     except Exception as e:
                         current_price_raw = signal.get('current_price_float', symbol_entry_price)
@@ -4078,7 +4095,7 @@ async def monitor_signals():
                                             
                     # 3. ANLIK FİYAT KONTROLÜ
                     try:
-                        ticker = client.futures_ticker(symbol=symbol)
+                        ticker = await fetch_futures_24h(symbol)
                         last_price = float(ticker['lastPrice'])
                         is_triggered_realtime = False
                         trigger_type_realtime = None

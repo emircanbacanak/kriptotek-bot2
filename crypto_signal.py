@@ -4849,21 +4849,6 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             active_signals[symbol]['status'] = 'closing'
             active_signals[symbol]['trigger_type'] = trigger_type
         
-        # Önce veritabanından pozisyonun hala var olduğunu doğrula
-        position_doc = mongo_collection.find_one({"_id": f"position_{symbol}"})
-        if not position_doc:
-            print(f"⚠️ {symbol} pozisyonu zaten kapatılmış veya DB'de bulunamadı. Yinelenen işlem engellendi.")
-            # Bellekteki global değişkenlerden de temizle
-            global_positions.pop(symbol, None)
-            global_active_signals.pop(symbol, None)
-            
-            # active_signals'dan da kaldır
-            if symbol in active_signals:
-                del active_signals[symbol]
-                print(f"✅ {symbol} active_signals'dan kaldırıldı (pozisyon yok)")
-            
-            return
-        
         # Mesaj tekrarını engellemek için kontrol
         message_sent_key = f"message_sent_{symbol}_{trigger_type}"
         if message_sent_key in position_processing_flags:
@@ -5066,7 +5051,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
         
-        # Pozisyonu veritabanından sil - HATA DURUMUNDA TEKRAR DENE
+        # Pozisyonu veritabanından sil - GÜÇLÜ TEMİZLEME
         try:
             # Önce active_signal belgesini sil
             delete_result = mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
@@ -5081,6 +5066,13 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 print(f"✅ {symbol} position belgesi veritabanından silindi")
             else:
                 print(f"⚠️ {symbol} position belgesi zaten silinmiş veya bulunamadı")
+            
+            # EK GÜVENLİK: Boş aktif sinyal listesi kaydet (eğer başka aktif sinyal kalmadıysa)
+            remaining_positions = mongo_collection.count_documents({"_id": {"$regex": "^position_"}})
+            if remaining_positions == 0:
+                # Tüm pozisyonlar kapandıysa, boş aktif sinyal listesi kaydet
+                save_active_signals_to_db({})
+                print(f"🧹 Tüm pozisyonlar kapandı, boş aktif sinyal listesi kaydedildi")
                 
         except Exception as e:
             print(f"❌ {symbol} veritabanından silinirken hata: {e}")
@@ -5112,6 +5104,21 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
         if symbol in global_active_signals:
             del global_active_signals[symbol]
             print(f"✅ {symbol} global_active_signals'dan kaldırıldı")
+        
+        # Pozisyon ve aktif sinyalleri veritabanına kaydet (güncel durumu yansıtmak için)
+        try:
+            updated_positions = load_positions_from_db()
+            updated_active_signals = load_active_signals_from_db()
+            
+            # Eğer hala veritabanında kalan pozisyon/aktif sinyal varsa, onları da temizle
+            if symbol in updated_positions:
+                print(f"⚠️ {symbol} veritabanında hala position var, manuel temizleniyor")
+                mongo_collection.delete_one({"_id": f"position_{symbol}"})
+            if symbol in updated_active_signals:
+                print(f"⚠️ {symbol} veritabanında hala active_signal var, manuel temizleniyor")
+                mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+        except Exception as e:
+            print(f"⚠️ {symbol} veritabanı temizliği sırasında hata: {e}")
         
         print(f"✅ {symbol} pozisyonu başarıyla kapatıldı ve 8 saat cooldown'a eklendi (pozisyon kapandığı zamandan itibaren)")
         

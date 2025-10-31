@@ -1259,13 +1259,6 @@ async def send_signal_to_all_users(message):
             except Exception as e:
                 print(f"❌ Gruba/Kanala sinyal gönderilemedi ({group_id}): {e}")
 
-async def send_admin_message(message):
-    try:
-        await send_telegram_message(message, BOT_OWNER_ID)
-        print(f"✅ Bot sahibine stop mesajı gönderildi: {BOT_OWNER_ID}")
-    except Exception as e:
-        print(f"❌ Bot sahibine stop mesajı gönderilemedi: {e}")
-        
 async def help_command(update, context):
     if not update.effective_user:
         return
@@ -1274,73 +1267,18 @@ async def help_command(update, context):
     if user_id != BOT_OWNER_ID and user_id not in ALLOWED_USERS and user_id not in ADMIN_USERS:
         return 
     
-    if user_id == BOT_OWNER_ID:
-        help_text = """
-👑 **Kripto Sinyal Botu Komutları (Bot Sahibi):**
+    # Tüm kullanıcılar için aynı yardım metni
+    help_text = """
+📊 **Kripto Sinyal Botu Komutları:**
 
 📊 **Temel Komutlar:**
 /help - Bu yardım mesajını göster
 /stats - İstatistikleri göster
 /active - Aktif sinyalleri göster
-/test - Test sinyali gönder
-/test öğlen - Öğlen uyarı mesajlarını test et
-/test akşam - Akşam uyarı mesajlarını test et
-👥 **Kullanıcı Yönetimi:**
-/adduser <user_id> - Kullanıcı ekle
-/removeuser <user_id> - Kullanıcı çıkar
-/listusers - İzin verilen kullanıcıları listele
-
-👑 **Admin Yönetimi:**
-/adminekle <user_id> - Admin ekle
-/adminsil <user_id> - Admin sil
-/listadmins - Admin listesini göster
 
 🧹 **Temizleme Komutları:**
 /clearall - Tüm verileri temizle (pozisyonlar, önceki sinyaller, bekleyen kuyruklar, istatistikler)
 /reducecooldowns - Cooldown sürelerini %95 kısalt
-🔧 **Özel Yetkiler:**
-• Tüm komutlara erişim
-• Admin ekleme/silme
-• Veri temizleme
-• Cooldown sürelerini kısaltma
-• Bot tam kontrolü
-        """
-    elif user_id in ADMIN_USERS:
-        help_text = """
-🛡️ **Kripto Sinyal Botu Komutları (Admin):**
-
-📊 **Temel Komutlar:**
-/help - Bu yardım mesajını göster
-/stats - İstatistikleri göster
-/active - Aktif sinyalleri göster
-/test - Test sinyali gönder
-/test öğlen - Öğlen uyarı mesajlarını test et
-/test akşam - Akşam uyarı mesajlarını test et
-👥 **Kullanıcı Yönetimi:**
-/adduser <user_id> - Kullanıcı ekle
-/removeuser <user_id> - Kullanıcı çıkar
-/listusers - İzin verilen kullanıcıları listele
-
-👑 **Admin Yönetimi:**
-/listadmins - Admin listesini göster
-
-🔧 **Yetkiler:**
-• Kullanıcı ekleme/silme
-• Test sinyali gönderme
-• İstatistik görüntüleme
-• Admin listesi görüntüleme
-        """
-    else:
-        help_text = """
-📱 **Kripto Sinyal Botu Komutları (Kullanıcı):**
-
-📊 **Temel Komutlar:**
-/help - Bu yardım mesajını göster
-/active - Aktif sinyalleri göster
-
-🔧 **Yetkiler:**
-• Aktif sinyalleri görüntüleme
-• Sinyal mesajlarını alma
         """
     
     try:
@@ -1356,81 +1294,6 @@ async def help_command(update, context):
         print(f"❌ Özel mesaj gönderilemedi ({user_id}): {e}")
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
-async def test_command(update, context):
-    if not update.effective_user:
-        return
-    
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        return 
-    
-    # Komut parametresini kontrol et
-    command_text = update.message.text.lower()
-    
-    if "öğlen" in command_text or "oglen" in command_text:
-        # Öğlen uyarı mesajlarını test et
-        await update.message.reply_text("🧪 Öğlen uyarı mesajları test ediliyor...")
-        
-        # 1. Risk Yönetimi Uyarısı
-        risk_message = "<b>⚠️ Risk Yönetimi Hatırlatması</b>\n\n• İşlemlerde sermayenizin en fazla %2-3'ü ile pozisyon açın.\n• Stop-Loss kullanmadan işlem yapmayın.\n• Kâr kadar sermaye koruması da önemlidir."
-        
-        # 2. Kaldıraç Kullanımı Uyarısı
-        leverage_message = "<b>⚠️ Kaldıraç Kullanımı Hakkında</b>\n\n• Yüksek kaldıraç büyük kazanç getirebilir ama aynı şekilde zararı da büyütür.\n• Maksimum 10x kaldıraç öneriyoruz.\n• Uzun vadeli yatırımcıysanız kaldıraçtan uzak durun."
-        
-        # 3. Piyasa Psikolojisi Uyarısı
-        psychology_message = "<b>⚠️ Piyasa Psikolojisi</b>\n\n• Panik alım & satımdan kaçının.\n• Stratejinize sadık kalın.\n• Unutmayın: Sabır, kazananların silahıdır."
-        
-        # Uyarıları sadece grup, kanal ve bot sahibine gönder
-        await send_to_groups_and_channels_only(risk_message)
-        await asyncio.sleep(1)
-        await send_to_groups_and_channels_only(leverage_message)
-        await asyncio.sleep(1)
-        await send_to_groups_and_channels_only(psychology_message)
-        
-        await update.message.reply_text("✅ Öğlen uyarı mesajları test edildi!")
-        
-    elif "akşam" in command_text or "aksam" in command_text or "gece" in command_text:
-        # Akşam/Gece uyarı mesajlarını test et
-        await update.message.reply_text("🧪 Akşam uyarı mesajları test ediliyor...")
-        
-        # 4. Güvenlik Hatırlatması
-        security_message = "<b>🔐 Güvenlik Hatırlatması</b>\n\n• Bilgilerinizi kimseyle paylaşmayın.\n• Sinyalleri sadece resmî kanalımızdan takip edin.\n• Yatırım kararlarınızı her zaman kendi araştırmanızla destekleyin."
-        
-        # 5. Gün Sonu Notu
-        end_of_day_message = "<b>🌙 Gün Sonu Notu</b>\n\n• Günlük kar-zararınızı mutlaka kontrol edin.\n• Gereksiz açık pozisyon bırakmayın.\n• Yarın yeni fırsatlar için hazır olun! 🚀"
-        
-        # Uyarıları sadece grup, kanal ve bot sahibine gönder
-        await send_to_groups_and_channels_only(security_message)
-        await asyncio.sleep(1)
-        await send_to_groups_and_channels_only(end_of_day_message)
-        
-        await update.message.reply_text("✅ Akşam uyarı mesajları test edildi!")
-        
-    else:
-        # Normal test sinyali gönder
-        test_message = """🟢 LONG SİNYALİ 🟢
-
-🔹 Kripto Çifti: BTCUSDT  
-💵 Giriş Fiyatı: $45,000.00
-📈 Hedef Fiyat: $46,350.00  
-📉 Stop Loss: $43,875.00
-⚡ Kaldıraç: 10x
-📊 24h Hacim: $2.5B
-
-⚠️ <b>ÖNEMLİ UYARILAR:</b>
-• Bu paylaşım yatırım tavsiyesi değildir.
-• Riskinizi azaltmak için sermayenizin %2'sinden fazlasını tek işlemde kullanmayın.
-• Stop-loss kullanmadan işlem yapmayın.
-
-📺 <b>Kanallar:</b>
-🔗 <a href="https://www.youtube.com/@kriptotek">YouTube</a> | <a href="https://t.me/kriptotek8907">Telegram</a> | <a href="https://x.com/kriptotek8907">X</a> | <a href="https://www.instagram.com/kriptotek/">Instagram</a>
-
-⚠️ <b>Bu bir test sinyalidir!</b> ⚠️"""
-    
-    await update.message.reply_text("🧪 Test sinyali gönderiliyor...")    
-    await send_signal_to_all_users(test_message)
-    await update.message.reply_text("✅ Test sinyali başarıyla gönderildi!")
-
 async def stats_command(update, context):
     if not update.effective_user:
         return
@@ -1443,9 +1306,9 @@ async def stats_command(update, context):
     # Önce veritabanından stats'ı yükle
     stats = load_stats_from_db() or global_stats
     
-    # Güncel pozisyon sayısını al
-    current_positions = load_positions_from_db() or {}
-    current_active_count = len(current_positions)
+    # Güncel aktif sinyal sayısını al (active_signals'dan)
+    current_active_signals = load_active_signals_from_db() or {}
+    current_active_count = len(current_active_signals)
     
     if not stats:
         stats_text = "📊 **Bot İstatistikleri:**\n\nHenüz istatistik verisi yok."
@@ -1523,149 +1386,6 @@ async def active_command(update, context):
 """
     
     await update.message.reply_text(active_text, parse_mode='Markdown')
-
-async def adduser_command(update, context):
-    """Kullanıcı ekleme komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, new_user_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, new_user_id)
-        return
-    
-    if new_user_id == BOT_OWNER_ID:
-        await send_command_response(update, "❌ Bot sahibi zaten her zaman erişime sahiptir.")
-        return
-    
-    if new_user_id in ALLOWED_USERS:
-        await send_command_response(update, "❌ Bu kullanıcı zaten izin verilen kullanıcılar listesinde.")
-        return
-    
-    if new_user_id in ADMIN_USERS:
-        await send_command_response(update, "❌ Bu kullanıcı zaten admin listesinde.")
-        return
-    
-    ALLOWED_USERS.add(new_user_id)
-    save_allowed_users()  # MongoDB'ye kaydet
-    await send_command_response(update, f"✅ Kullanıcı {new_user_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
-
-async def removeuser_command(update, context):
-    """Kullanıcı çıkarma komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, remove_user_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, remove_user_id)
-        return
-    
-    if remove_user_id in ALLOWED_USERS:
-        ALLOWED_USERS.remove(remove_user_id)
-        save_allowed_users()  # MongoDB'ye kaydet
-        await send_command_response(update, f"✅ Kullanıcı {remove_user_id} başarıyla çıkarıldı ve kalıcı olarak kaydedildi.")
-    else:
-        await send_command_response(update, f"❌ Kullanıcı {remove_user_id} zaten izin verilen kullanıcılar listesinde yok.")
-
-async def listusers_command(update, context):
-    """İzin verilen kullanıcıları listeleme komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    if not ALLOWED_USERS:
-        users_text = "📋 **İzin Verilen Kullanıcılar:**\n\nHenüz izin verilen kullanıcı yok."
-    else:
-        users_list = "\n".join([f"• {user_id}" for user_id in ALLOWED_USERS])
-        users_text = f"📋 **İzin Verilen Kullanıcılar:**\n\n{users_list}"
-    
-    await send_command_response(update, users_text)
-
-async def adminekle_command(update, context):
-    """Admin ekleme komutu (sadece bot sahibi)"""
-    user_id, is_authorized = validate_user_command(update, require_owner=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, new_admin_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, new_admin_id)
-        return
-    
-    if new_admin_id == BOT_OWNER_ID:
-        await send_command_response(update, "❌ Bot sahibi zaten admin yetkilerine sahiptir.")
-        return
-    
-    if new_admin_id in ADMIN_USERS:
-        await send_command_response(update, "❌ Bu kullanıcı zaten admin listesinde.")
-        return
-    
-    ADMIN_USERS.add(new_admin_id)
-    save_admin_users()  # MongoDB'ye kaydet
-    await send_command_response(update, f"✅ Admin {new_admin_id} başarıyla eklendi ve kalıcı olarak kaydedildi.")
-
-async def adminsil_command(update, context):
-    """Admin silme komutu (sadece bot sahibi)"""
-    user_id, is_authorized = validate_user_command(update, require_owner=True)
-    if not is_authorized:
-        return
-    
-    is_valid, error_msg = validate_command_args(update, context, 1)
-    if not is_valid:
-        await send_command_response(update, error_msg)
-        return
-    
-    is_valid, remove_admin_id = validate_user_id(context.args[0])
-    if not is_valid:
-        await send_command_response(update, remove_admin_id)
-        return
-    
-    if remove_admin_id in ADMIN_USERS:
-        ADMIN_USERS.remove(remove_admin_id)
-        save_admin_users()  # MongoDB'ye kaydet
-        await send_command_response(update, f"✅ Admin {remove_admin_id} başarıyla silindi ve kalıcı olarak kaydedildi.")
-    else:
-        await send_command_response(update, f"❌ Admin {remove_admin_id} zaten admin listesinde yok.")
-
-async def listadmins_command(update, context):
-    """Admin listesini gösterme komutu (sadece bot sahibi ve adminler)"""
-    user_id, is_authorized = validate_user_command(update, require_admin=True)
-    if not is_authorized:
-        return
-    
-    if not ADMIN_USERS:
-        admins_text = f"👑 **Admin Kullanıcıları:**\n\nHenüz admin kullanıcı yok.\n\nBot Sahibi: {BOT_OWNER_ID}"
-    else:
-        admins_list = "\n".join([f"• {admin_id}" for admin_id in ADMIN_USERS])
-        admins_text = f"👑 **Admin Kullanıcıları:**\n\n{admins_list}\n\nBot Sahibi: {BOT_OWNER_ID}"
-    
-    await send_command_response(update, admins_text)
-
-async def handle_message(update, context):
-    """Genel mesaj handler'ı"""
-    user_id, is_authorized = validate_user_command(update, require_admin=False)
-    if not is_authorized:
-        return
-    
-    if user_id == BOT_OWNER_ID or user_id in ALLOWED_USERS or user_id in ADMIN_USERS:
-        await send_command_response(update, "🤖 Bu bot sadece komutları destekler. /help yazarak mevcut komutları görebilirsiniz.")
 
 async def error_handler(update, context):
     """Hata handler'ı"""
@@ -1795,17 +1515,8 @@ async def setup_bot():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("active", active_command))
-    app.add_handler(CommandHandler("test", test_command))
-    app.add_handler(CommandHandler("adduser", adduser_command))
-    app.add_handler(CommandHandler("removeuser", removeuser_command))
-    app.add_handler(CommandHandler("listusers", listusers_command))
-    app.add_handler(CommandHandler("adminekle", adminekle_command))
-    app.add_handler(CommandHandler("adminsil", adminsil_command))
-    app.add_handler(CommandHandler("listadmins", listadmins_command))
     app.add_handler(CommandHandler("clearall", clear_all_command))
     app.add_handler(CommandHandler("reducecooldowns", reduce_cooldowns_command))
-    
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Grup ekleme/çıkarma handler'ı - ChatMemberUpdated event'ini dinle
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_chat_member_update))
@@ -3121,6 +2832,25 @@ async def signal_processing_loop():
                     except Exception as e:
                         print(f"⚠️ {symbol} active_signal silinirken hata: {e}")
             
+            # TERS DURUM KONTROLÜ: Pozisyon var ama aktif sinyal yok - orfan pozisyonları temizle
+            orphaned_positions = []
+            for symbol in list(positions.keys()):
+                # Aktif sinyal var mı kontrol et
+                active_signal_exists = mongo_collection.find_one({"_id": f"active_signal_{symbol}"}) is not None
+                if symbol not in active_signals or not active_signal_exists:
+                    print(f"⚠️ {symbol} → Aktif sinyali yok, orfan pozisyon temizleniyor")
+                    orphaned_positions.append(symbol)
+                    del positions[symbol]
+            
+            # Orphaned pozisyonları veritabanından da sil
+            if orphaned_positions:
+                for symbol in orphaned_positions:
+                    try:
+                        mongo_collection.delete_one({"_id": f"position_{symbol}"})
+                        print(f"✅ {symbol} position veritabanından silindi")
+                    except Exception as e:
+                        print(f"⚠️ {symbol} position silinirken hata: {e}")
+            
             # Her 30 döngüde bir pozisyon kontrolü yap (yaklaşık 5 dakikada bir)
             position_check_counter += 1
             if position_check_counter >= 30:
@@ -4264,10 +3994,9 @@ async def main():
 
     signal_task = asyncio.create_task(signal_processing_loop())
     monitor_task = asyncio.create_task(monitor_signals())
-    warning_task = asyncio.create_task(send_scheduled_warnings())
     try:
         # Tüm task'ları bekle
-        await asyncio.gather(signal_task, monitor_task, warning_task)
+        await asyncio.gather(signal_task, monitor_task)
     except KeyboardInterrupt:
         print("\n⚠️ Bot kapatılıyor...")
     except asyncio.CancelledError:
@@ -4278,11 +4007,9 @@ async def main():
             signal_task.cancel()
         if not monitor_task.done():
             monitor_task.cancel()
-        if not warning_task.done():
-            warning_task.cancel()
         
         try:
-            await asyncio.gather(signal_task, monitor_task, warning_task, return_exceptions=True)
+            await asyncio.gather(signal_task, monitor_task, return_exceptions=True)
         except Exception:
             pass
 
@@ -5046,8 +4773,8 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"
                 f"💵 <b>Çıkış:</b> ${exit_price:.6f}"
             )
-            # STOP mesajları sadece bot sahibine gidecek
-            await send_admin_message(message)
+            # STOP mesajları gönderilmez - sadece log kaydı tutulur
+            print(f"🛑 {symbol} STOP oldu - mesaj gönderilmiyor (bot sahibi bilgilendirilmiyor)")
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
         
@@ -5194,78 +4921,6 @@ def cleanup_corrupted_positions():
     except Exception as e:
         print(f"❌ Bozuk pozisyonlar temizlenirken hata: {e}")
         return False
-
-async def send_scheduled_warnings():
-    """Her gün saat 12:00 ve 00:00'da (İstanbul saati) uyarı mesajları gönderir"""
-    while True:
-        try:
-            # İstanbul saati ile şu anki zamanı al
-            istanbul_time = datetime.now() + timedelta(hours=3)  # UTC+3
-            
-            # Eğer saat 12:00 ise öğlen uyarılarını gönder
-            if istanbul_time.hour == 12 and istanbul_time.minute == 0:
-                print("⏰ Saat 12:00 - Öğlen uyarı mesajları gönderiliyor...")
-                
-                # 1. Risk Yönetimi Uyarısı (HTML formatında kalın)
-                risk_message = "<b>⚠️ Risk Yönetimi Hatırlatması</b>\n\n• İşlemlerde sermayenizin en fazla %2-3'ü ile pozisyon açın.\n• Stop-Loss kullanmadan işlem yapmayın.\n• Kâr kadar sermaye koruması da önemlidir."
-                
-                # 2. Kaldıraç Kullanımı Uyarısı (HTML formatında kalın)
-                leverage_message = "<b>⚠️ Kaldıraç Kullanımı Hakkında</b>\n\n• Yüksek kaldıraç büyük kazanç getirebilir ama aynı şekilde zararı da büyütür.\n• Maksimum 10x kaldıraç öneriyoruz.\n• Uzun vadeli yatırımcıysanız kaldıraçtan uzak durun."
-                
-                # 3. Piyasa Psikolojisi Uyarısı (HTML formatında kalın)
-                psychology_message = "<b>⚠️ Piyasa Psikolojisi</b>\n\n• Panik alım & satımdan kaçının.\n• Stratejinize sadık kalın.\n• Unutmayın: Sabır, kazananların silahıdır."
-                
-                # Uyarıları sadece grup, kanal ve bot sahibine gönder
-                await send_to_groups_and_channels_only(risk_message)
-                await asyncio.sleep(2)  # 2 saniye bekle
-                
-                await send_to_groups_and_channels_only(leverage_message)
-                await asyncio.sleep(2)  # 2 saniye bekle
-                
-                await send_to_groups_and_channels_only(psychology_message)
-                
-                print("✅ Öğlen uyarı mesajları başarıyla gönderildi")
-                
-            # Eğer saat 00:00 ise gece uyarılarını gönder
-            elif istanbul_time.hour == 0 and istanbul_time.minute == 0:
-                print("⏰ Saat 00:00 - Gece uyarı mesajları gönderiliyor...")
-                
-                # 4. Güvenlik Hatırlatması (HTML formatında kalın)
-                security_message = "<b>🔐 Güvenlik Hatırlatması</b>\n\n• Bilgilerinizi kimseyle paylaşmayın.\n• Sinyalleri sadece resmî kanalımızdan takip edin.\n• Yatırım kararlarınızı her zaman kendi araştırmanızla destekleyin."
-                
-                # 5. Gün Sonu Notu (HTML formatında kalın)
-                end_of_day_message = "<b>🌙 Gün Sonu Notu</b>\n\n• Günlük kar-zararınızı mutlaka kontrol edin.\n• Gereksiz açık pozisyon bırakmayın.\n• Yarın yeni fırsatlar için hazır olun! 🚀"
-                
-                # Uyarıları sadece grup, kanal ve bot sahibine gönder
-                await send_to_groups_and_channels_only(security_message)
-                await asyncio.sleep(2)  # 2 saniye bekle
-                
-                await send_to_groups_and_channels_only(end_of_day_message)
-                
-                print("✅ Gece uyarı mesajları başarıyla gönderildi")
-            
-            # 1 dakika bekle ve tekrar kontrol et
-            await asyncio.sleep(60)
-                
-        except Exception as e:
-            print(f"❌ Uyarı mesajları gönderilirken hata: {e}")
-            await asyncio.sleep(300)  # Hata durumunda 5 dakika bekle
-
-async def send_to_groups_and_channels_only(message):
-    """Mesajı sadece gruplara, kanallara ve bot sahibine gönderir (izin verilen kullanıcılara ve adminlere gönderilmez)"""
-    try:
-        # Grup ve kanallara gönder
-        for group_id in BOT_OWNER_GROUPS:
-            await send_telegram_message(message, group_id)
-            await asyncio.sleep(0.5)  # Rate limiting için kısa bekleme
-        
-        # Bot sahibine gönder
-        await send_telegram_message(message, BOT_OWNER_ID)
-        
-        print(f"✅ Mesaj {len(BOT_OWNER_GROUPS)} grup/kanala ve bot sahibine gönderildi")
-        
-    except Exception as e:
-        print(f"❌ Grup/kanal mesajları gönderilirken hata: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

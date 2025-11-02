@@ -1113,7 +1113,10 @@ async def send_telegram_message(message, chat_id=None):
         return False
 
 async def send_signal_to_all_users(message):
-    """Sinyal, Hedef ve Stop mesajlarını sadece ekli olduğu gruplara/kanallara gönderir"""
+    """Sinyal ve Hedef mesajlarını sadece ekli olduğu gruplara/kanallara gönderir"""
+    if message and ("STOP" in message.upper() or "🛑" in message):
+        return
+    
     sent_chats = set() 
 
     # Sadece bot sahibinin ekli olduğu gruplara/kanallara gönder
@@ -2404,11 +2407,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                     
                 min_stop_diff = stop_loss * 0.001 
                 if close_price <= stop_loss and (stop_loss - close_price) >= min_stop_diff:
-                    print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
-                    
-                    # Pozisyonu kapat ve mesajı gönder
                     await close_position(symbol, "stop_loss", close_price, None, position)
-                    print(f"📢 STOP LOSS mesajı close_position() tarafından gönderildi")
                     
                     # İstatistikleri güncelle
                     stats["failed_signals"] += 1
@@ -2444,8 +2443,6 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                             print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
                     else:
                         print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                    print(f"📢 Stop mesajı monitor_signals() tarafından gönderilecek")
-                    print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
                                 # SHORT sinyali için hedef/stop kontrolü
                 elif signal_type == "SHORT" or signal_type == "SATIS":
@@ -2505,11 +2502,7 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                         
                     # Stop kontrolü: Güncel fiyat stop'u geçti mi? (SHORT: yukarı çıkması zarar)
                     elif close_price >= stop_loss:
-                        print(f"🛑 {symbol} STOP BAŞARIYLA GERÇEKLEŞTİ! (Bot başlangıcında tespit edildi)")
-                        
-                        # Pozisyonu kapat ve mesajı gönder
                         await close_position(symbol, "stop_loss", close_price, None, position)
-                        print(f"📢 SHORT STOP LOSS mesajı close_position() tarafından gönderildi")
                         
                         # İstatistikleri güncelle
                         stats["failed_signals"] += 1
@@ -2543,9 +2536,6 @@ async def check_existing_positions_and_cooldowns(positions, active_signals, stat
                                 print(f"❌ {symbol} veritabanı kaydı ikinci denemede de başarısız!")
                         else:
                             print(f"✅ {symbol} veritabanından başarıyla kaldırıldı")
-                        # MESAJ GÖNDERİMİ KALDIRILDI - close_position() fonksiyonu mesaj gönderecek
-                        print(f"📢 Stop mesajı close_position() tarafından gönderilecek")
-                        print(f"🛑 {symbol} - Bot başlangıcında SL tespit edildi ve işlendi!")
                     
         except Exception as e:
             print(f"⚠️ {symbol} pozisyon kontrolü sırasında hata: {e}")
@@ -3250,18 +3240,12 @@ async def signal_processing_loop():
                         # Minimum fark kontrolü: Fiyat stop'u en az 0.1% geçmeli (daha güvenli)
                         min_stop_diff = stop_loss * 0.001  # %0.1 minimum fark
                         if last_price <= stop_loss and (stop_loss - last_price) >= min_stop_diff:
-                            
-                            # STOP OLDU! 🛑
-                            # Güvenli zarar hesaplaması
                             if entry_price > 0:
                                 loss_percentage = ((entry_price - stop_loss) / entry_price) * 100
-                                loss_usd = 100 * (loss_percentage / 100)  # 100$ yatırım için
+                                loss_usd = 100 * (loss_percentage / 100)
                             else:
                                 loss_percentage = 0
                                 loss_usd = 0
-                            
-                            print(f"🛑 STOP OLDU! {symbol} - Giriş: ${entry_price:.4f}, Stop: ${stop_loss:.4f}, Çıkış: ${last_price:.4f}")
-                            print(f"💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})")
                             
                             # Başarısız sinyali kaydet
                             failed_signals[symbol] = {
@@ -3298,9 +3282,6 @@ async def signal_processing_loop():
                             if symbol in positions:
                                 del positions[symbol]
                             del active_signals[symbol]
-
-                            # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
-                            print(f"📢 {symbol} stop oldu - monitor_signals() mesaj gönderecek")
 
                     # SHORT sinyali için hedef/stop kontrolü
                     elif signal_type == "SATIŞ" or signal_type == "SATIS":
@@ -3374,18 +3355,12 @@ async def signal_processing_loop():
                         # Minimum fark kontrolü: Fiyat stop'u en az 0.1% geçmeli (daha güvenli)
                         min_stop_diff = stop_loss * 0.001  # %0.1 minimum fark
                         if last_price >= stop_loss and (last_price - stop_loss) >= min_stop_diff:
-                            
-                            # STOP OLDU! 🛑
-                            # Güvenli zarar hesaplaması
                             if entry_price > 0:
                                 loss_percentage = ((stop_loss - entry_price) / entry_price) * 100
-                                loss_usd = 100 * (loss_percentage / 100)  # 100$ yatırım için
+                                loss_usd = 100 * (loss_percentage / 100)
                             else:
                                 loss_percentage = 0
                                 loss_usd = 0
-                            
-                            print(f"🛑 STOP OLDU! {symbol} - Giriş: ${entry_price:.4f}, Stop: ${stop_loss:.4f}, Çıkış: ${last_price:.4f}")
-                            print(f"💸 Zarar: %{loss_percentage:.2f} (${loss_usd:.2f})")
                             
                             # Başarısız sinyali kaydet
                             failed_signals[symbol] = {
@@ -3422,9 +3397,6 @@ async def signal_processing_loop():
                             if symbol in positions:
                                 del positions[symbol]
                             del active_signals[symbol]
-
-                            # MESAJ GÖNDERİMİ KALDIRILDI - monitor_signals() fonksiyonu mesaj gönderecek
-                            print(f"📢 {symbol} stop oldu - monitor_signals() mesaj gönderecek")
                     
                 except Exception as e:
                     print(f"Aktif sinyal güncelleme hatası: {symbol} - {str(e)}")
@@ -4472,7 +4444,6 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                         profit_loss_percent = ((stop_loss_price - entry_price) / entry_price) * 100
                     else: # SHORT veya SATIS
                         profit_loss_percent = ((entry_price - stop_loss_price) / entry_price) * 100
-                    print(f"🛑 {symbol} - SL hesaplaması: Stop fiyatından (${stop_loss_price:.6f}) çıkış")
                     
                 else:
                     # Varsayılan durum (final_price kullan)
@@ -4516,15 +4487,10 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             # Bot sahibine hedef mesajı gönderme
         
         elif trigger_type == "stop_loss":
-            # Atomik güncelleme ile istatistikleri güncelle
             update_stats_atomic({
                 "failed_signals": 1,
                 "total_profit_loss": profit_loss_usd
             })
-            
-            # Stop-loss mesajları gönderilmez - sadece log kaydı tutulur
-            print(f"🛑 {symbol} STOP oldu - mesaj gönderilmiyor")
-            # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
         
         # Pozisyonu veritabanından sil - GÜÇLÜ TEMİZLEME

@@ -2056,7 +2056,7 @@ def calculate_full_pine_signals(df, timeframe):
 
     # Optimizasyon: Vektörleştirilmiş signal doldurma
     # Signal 0 olan yerlere önceki değeri forward fill ile doldur
-    df['signal'] = df['signal'].replace(0, np.nan).fillna(method='ffill')
+    df['signal'] = df['signal'].replace(0, np.nan).ffill()
     
     # Hala NaN olanlar (ilk satırlar) için MACD ile doldur
     mask = df['signal'].isna()

@@ -4522,16 +4522,8 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 "total_profit_loss": profit_loss_usd
             })
             
-            # Stop-loss mesajında stop fiyatından çıkış göster
-            exit_price = stop_loss_price if trigger_type == "stop_loss" else final_price_float
-            message = (
-                f"🛑 <b>STOP OLDU!</b> 🛑\n\n"
-                f"🔹 <b>Kripto Çifti:</b> {symbol}\n"
-                f"💸 <b>Zarar:</b> %{profit_loss_percent:.2f} (${profit_loss_usd:.2f})\n"
-                f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"
-                f"💵 <b>Çıkış:</b> ${exit_price:.6f}"
-            )
-            await send_signal_to_all_users(message)
+            # Stop-loss mesajları gönderilmez - sadece log kaydı tutulur
+            print(f"🛑 {symbol} STOP oldu - mesaj gönderilmiyor")
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
         

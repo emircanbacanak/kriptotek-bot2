@@ -43,6 +43,8 @@ MONGODB_DB = os.getenv("MONGODB_DB", "crypto_signal_bot")
 MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "allowed_users")
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))
 ADMIN_USERS = set()
+BOT_OWNER_GROUPS = set()
+ALLOWED_USERS = set()
 
 mongo_client = None
 mongo_db = None
@@ -404,8 +406,6 @@ def load_active_signals_from_db():
     except Exception as e:
         print(f"❌ MongoDB'den aktif sinyaller yüklenirken hata: {e}")
         return {}
-
-ALLOWED_USERS = set()
 
 def connect_mongodb():
     """MongoDB bağlantısını kur"""
@@ -2189,6 +2189,11 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal gönderilmiyor")
         return
     
+    # Aktif sinyal kontrolü - eğer zaten aktif sinyal varsa yeni sinyal gönderme
+    if symbol in active_signals:
+        print(f"⏸️ {symbol} → Zaten aktif sinyal var, yeni sinyal gönderilmiyor")
+        return
+    
     try:
         # ETH/BTC için özel debug log
         if symbol in ['ETHUSDT', 'BTCUSDT']:
@@ -2242,8 +2247,28 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             # Pozisyonu dictionary'ye ekle
             positions[symbol] = position
             
+            # Aktif sinyali de oluştur
+            active_signals[symbol] = {
+                "symbol": symbol,
+                "type": dominant_signal,
+                "entry_price": format_price(entry_price_float, entry_price_float),
+                "entry_price_float": entry_price_float,
+                "target_price": format_price(target_price_float, entry_price_float),
+                "stop_loss": format_price(stop_loss_float, entry_price_float),
+                "signals": current_signals,
+                "leverage": leverage_int,
+                "signal_time": str(datetime.now()),
+                "current_price": format_price(entry_price_float, entry_price_float),
+                "current_price_float": entry_price_float,
+                "last_update": str(datetime.now()),
+                "status": "active"
+            }
+            
             # Pozisyonu MongoDB'ye kaydet
             save_positions_to_db({symbol: position})
+            
+            # Aktif sinyali de MongoDB'ye kaydet
+            save_active_signals_to_db({symbol: active_signals[symbol]})
             
             # İstatistikleri güncelle
             stats["total_signals"] += 1

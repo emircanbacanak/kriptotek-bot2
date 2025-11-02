@@ -2934,21 +2934,24 @@ async def signal_processing_loop():
                 signal_processing_loop._loop_count += 1
             
             # Türkiye saati kontrolü - 23:15-03:15 arasında yeni sinyal arama
+            # GEÇİCİ OLARAK DEVRE DIŞI: Yasaklı saatler kaldırıldı
             turkey_timezone = pytz.timezone('Europe/Istanbul')
             turkey_time = datetime.now(turkey_timezone)
             current_hour = turkey_time.hour
             current_minute = turkey_time.minute
             
             # 23:15 (23*60 + 15 = 1395) ile 03:15 (3*60 + 15 = 195) arası kontrol
+            # GEÇİCİ OLARAK DEVRE DIŞI: Her zaman True yapıldı
             current_time_minutes = current_hour * 60 + current_minute
-            is_signal_search_time = not (1395 <= current_time_minutes or current_time_minutes <= 195)
+            # is_signal_search_time = not (1395 <= current_time_minutes or current_time_minutes <= 195)
+            is_signal_search_time = True  # GEÇİCİ: Yasaklı saatler kaldırıldı, her zaman sinyal ara
             
             print("=" * 60)
             print("🚀 YENİ SİNYAL ARAMA DÖNGÜSÜ BAŞLIYOR")
             print(f"📊 Mevcut durum: {len(positions)} pozisyon, {len(active_signals)} aktif sinyal, {len(stop_cooldown)} cooldown")
             print(f"⏰ Döngü başlangıç: {datetime.now().strftime('%H:%M:%S')}")
             print(f"🇹🇷 Türkiye saati: {turkey_time.strftime('%H:%M:%S')}")
-            print(f"🔍 Sinyal arama: {'✅ AÇIK' if is_signal_search_time else '🚫 KAPALI (23:15-03:15)'}")
+            print(f"🔍 Sinyal arama: ✅ AÇIK (GEÇİCİ: Yasaklı saatler kaldırıldı)")
             print(f"🔄 Döngü #: {signal_processing_loop._loop_count}")
             print("=" * 60)
             
@@ -3027,13 +3030,14 @@ async def signal_processing_loop():
                 signal_processing_loop._first_signal_search = False
             
             # Türkiye saati kontrolü - 23:15-03:15 arasında yeni sinyal arama yapma
-            if not is_signal_search_time:
-                print(f"🚫 Türkiye saati {turkey_time.strftime('%H:%M')} - Yeni sinyal arama kapalı (23:15-03:15)")
-                print(f"   Mevcut sinyaller kontrol edilmeye devam ediyor, cooldown sayacı azalıyor...")
-                
-                # Mevcut sinyalleri kontrol etmeye devam et ama yeni sinyal arama
-                await asyncio.sleep(CONFIG["MAIN_LOOP_SLEEP_SECONDS"])
-                continue
+            # GEÇİCİ OLARAK DEVRE DIŞI: Yasaklı saatler kontrolü kaldırıldı
+            # if not is_signal_search_time:
+            #     print(f"🚫 Türkiye saati {turkey_time.strftime('%H:%M')} - Yeni sinyal arama kapalı (23:15-03:15)")
+            #     print(f"   Mevcut sinyaller kontrol edilmeye devam ediyor, cooldown sayacı azalıyor...")
+            #     
+            #     # Mevcut sinyalleri kontrol etmeye devam et ama yeni sinyal arama
+            #     await asyncio.sleep(CONFIG["MAIN_LOOP_SLEEP_SECONDS"])
+            #     continue
             
             # Sinyal bulma mantığı - tüm uygun sinyalleri topla
             found_signals = {}  # Bulunan tüm sinyaller bu sözlükte toplanacak

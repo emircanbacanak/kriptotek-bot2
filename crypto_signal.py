@@ -1113,25 +1113,18 @@ async def send_telegram_message(message, chat_id=None):
         return False
 
 async def send_signal_to_all_users(message):
+    """Sinyal, Hedef ve Stop mesajlarını sadece ekli olduğu gruplara/kanallara gönderir"""
     sent_chats = set() 
-    for user_id in ALLOWED_USERS:
-        if str(user_id) not in sent_chats:
-            try:
-                await send_telegram_message(message, user_id)
-                print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
-                sent_chats.add(str(user_id))
-            except Exception as e:
-                print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
-    
 
+    # Sadece bot sahibinin ekli olduğu gruplara/kanallara gönder
     for group_id in BOT_OWNER_GROUPS:
         if str(group_id) not in sent_chats:
             try:
                 await send_telegram_message(message, group_id)
-                print(f"✅ Gruba/Kanala sinyal gönderildi: {group_id}")
+                print(f"✅ Gruba/Kanala mesaj gönderildi: {group_id}")
                 sent_chats.add(str(group_id))
             except Exception as e:
-                print(f"❌ Gruba/Kanala sinyal gönderilemedi ({group_id}): {e}")
+                print(f"❌ Gruba/Kanala mesaj gönderilemedi ({group_id}): {e}")
 
 async def help_command(update, context):
     if not update.effective_user:
@@ -4538,8 +4531,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"
                 f"💵 <b>Çıkış:</b> ${exit_price:.6f}"
             )
-            # STOP mesajları gönderilmez - sadece log kaydı tutulur
-            print(f"🛑 {symbol} STOP oldu - mesaj gönderilmiyor (bot sahibi bilgilendirilmiyor)")
+            await send_signal_to_all_users(message)
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
         

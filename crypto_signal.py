@@ -1282,25 +1282,40 @@ async def send_telegram_message(message, chat_id=None):
         return False
 
 async def send_signal_to_all_users(message):
-    sent_chats = set() 
+    """Tüm kullanıcılara ve gruplara sinyal gönderir. En az bir başarılı gönderim varsa True döner."""
+    sent_chats = set()
+    success_count = 0
+    total_attempts = 0
+    
     for user_id in ALLOWED_USERS:
         if str(user_id) not in sent_chats:
+            total_attempts += 1
             try:
                 await send_telegram_message(message, user_id)
                 print(f"✅ Kullanıcıya sinyal gönderildi: {user_id}")
                 sent_chats.add(str(user_id))
+                success_count += 1
             except Exception as e:
                 print(f"❌ Kullanıcıya sinyal gönderilemedi ({user_id}): {e}")
-    
 
     for group_id in BOT_OWNER_GROUPS:
         if str(group_id) not in sent_chats:
+            total_attempts += 1
             try:
                 await send_telegram_message(message, group_id)
                 print(f"✅ Gruba/Kanala sinyal gönderildi: {group_id}")
                 sent_chats.add(str(group_id))
+                success_count += 1
             except Exception as e:
                 print(f"❌ Gruba/Kanala sinyal gönderilemedi ({group_id}): {e}")
+    
+    # En az bir başarılı gönderim varsa True döner
+    if success_count > 0:
+        print(f"✅ Toplam {success_count}/{total_attempts} gönderim başarılı")
+        return True
+    else:
+        print(f"❌ Hiçbir gönderim başarılı olmadı ({total_attempts} deneme)")
+        return False
 
 async def help_command(update, context):
     if not update.effective_user:
@@ -4871,9 +4886,24 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             )
             
             # KRİTİK: Mesajı kanala ve gruba gönder (tüm kullanıcılara ve gruplara)
-            await send_signal_to_all_users(message)
+            # ÖNCE MESAJ GÖNDER, SONRA POZİSYONU SİL
+            message_sent_successfully = False
+            try:
+                message_sent_successfully = await send_signal_to_all_users(message)
+                if message_sent_successfully:
+                    print(f"✅ {symbol} → Hedef mesajı başarıyla gönderildi")
+                else:
+                    print(f"❌ {symbol} → Hedef mesajı hiçbir kanala/gruba gönderilemedi")
+            except Exception as e:
+                print(f"❌ {symbol} → Hedef mesajı gönderilirken hata oluştu: {e}")
+                message_sent_successfully = False
             
-            # KRİTİK: Mesaj gönderildi flag'ini set et (hemen, çift gönderme önleme)
+            # Mesaj gönderilemediyse pozisyonu silme, hata ver
+            if not message_sent_successfully:
+                print(f"⚠️ {symbol} → Mesaj gönderilemediği için pozisyon kapatılmadı, tekrar denenecek")
+                return
+            
+            # KRİTİK: Mesaj başarıyla gönderildikten SONRA flag'leri set et (çift gönderme önleme)
             current_time = datetime.now()
             position_processing_flags[message_sent_key] = current_time
             
@@ -4910,19 +4940,20 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             # Mesaj gönderildi flag'ini set et
             position_processing_flags[message_sent_key] = datetime.now()
         
-        # Pozisyonu veritabanından sil - GÜÇLÜ TEMİZLEME
+        # KRİTİK: POZİSYONU SİL - SADECE MESAJ BAŞARIYLA GÖNDERİLDİKTEN SONRA
+        # (take_profit için mesaj gönderildi, stop_loss için mesaj gönderilmiyor ama işlem yapılıyor)
         try:
             # Önce active_signal belgesini sil
             delete_result = mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
             if delete_result.deleted_count > 0:
-                print(f"✅ {symbol} active_signal belgesi veritabanından silindi")
+                print(f"✅ {symbol} active_signal belgesi veritabanından silindi (mesaj gönderildikten sonra)")
             else:
                 print(f"⚠️ {symbol} active_signal belgesi zaten silinmiş veya bulunamadı")
             
             # Sonra position belgesini sil
             delete_result = mongo_collection.delete_one({"_id": f"position_{symbol}"})
             if delete_result.deleted_count > 0:
-                print(f"✅ {symbol} position belgesi veritabanından silindi")
+                print(f"✅ {symbol} position belgesi veritabanından silindi (mesaj gönderildikten sonra)")
             else:
                 print(f"⚠️ {symbol} position belgesi zaten silinmiş veya bulunamadı")
             

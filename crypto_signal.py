@@ -14,7 +14,7 @@ import aiohttp
 from dotenv import load_dotenv
 import os
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, DuplicateKeyError
 from decimal import Decimal, ROUND_DOWN, getcontext
 from binance.client import Client
 import re
@@ -841,50 +841,10 @@ def save_positions_to_db(positions):
             
             if result.modified_count > 0 or result.upserted_id:
                 print(f"✅ {symbol} pozisyonu güncellendi/eklendi")
-                
-                # Pozisyon kaydedildikten sonra active_signal dokümanını da oluştur
-                try:
-                    # Pozisyon verilerinden active_signal dokümanı oluştur
-                    active_signal_doc = {
-                        "_id": f"active_signal_{symbol}",
-                        "symbol": symbol,
-                        "type": position.get("type", "ALIŞ"),
-                        "entry_price": format_price(position.get("open_price", 0), position.get("open_price", 0)),
-                        "entry_price_float": position.get("open_price", 0),
-                        "target_price": format_price(position.get("target", 0), position.get("open_price", 0)),
-                        "stop_loss": format_price(position.get("stop", 0), position.get("open_price", 0)),
-                        "signals": position.get("signals", {}),
-                        "leverage": position.get("leverage", 10),
-                        "signal_time": position.get("entry_time", datetime.now().strftime('%Y-%m-%d %H:%M')),
-                        "current_price": format_price(position.get("open_price", 0), position.get("open_price", 0)),
-                        "current_price_float": position.get("open_price", 0),
-                        "last_update": str(datetime.now()),
-                        "status": "active",
-                        "saved_at": str(datetime.now())
-                    }
-                    
-                    # Active signal dokümanını kaydet
-                    mongo_collection.update_one(
-                        {"_id": f"active_signal_{symbol}"},
-                        {"$set": active_signal_doc},
-                        upsert=True
-                    )
-                    print(f"✅ {symbol} active_signal dokümanı oluşturuldu")
-                    
-                except Exception as e:
-                    print(f"⚠️ {symbol} active_signal dokümanı oluşturulurken hata: {e}")
             else:
                 print(f"⚠️ {symbol} pozisyonu güncellenemedi")
         
         print(f"✅ {len(positions)} pozisyon MongoDB'ye kaydedildi")
-        
-        # Pozisyon durumlarını güncelle - artık active_signal dokümanları zaten oluşturuldu
-        for symbol in positions.keys():
-            try:
-                # Durumu "active" olarak güncelle
-                update_position_status_atomic(symbol, "active")
-            except Exception as e:
-                print(f"⚠️ {symbol} pozisyon durumu güncellenirken hata: {e}")
         
         return True
     except Exception as e:
@@ -2330,123 +2290,102 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
 async def process_selected_signal(signal_data, positions, active_signals, stats):
     """Seçilen sinyali işler ve gönderir."""
     symbol = signal_data['symbol']
-    current_signals = signal_data['signals']
-    price = signal_data['price']
-    volume_usd = signal_data['volume_usd']
-    sinyal_tipi = signal_data['signal_type']
-    
-    # ETH için özel debug log
-    if symbol == 'ETHUSDT':
-        print(f"🔍 ETHUSDT → process_selected_signal başladı")
-        print(f"   Price: {price}, Volume: {volume_usd}, Signal Type: {sinyal_tipi}")
-        print(f"   Current signals: {current_signals}")
     
     # KRİTİK: Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa yeni sinyal gönderme
-    if symbol in positions:
-        print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal gönderilmiyor")
-        return False
-    
-    # KRİTİK: Aktif sinyal kontrolü - eğer zaten aktif sinyal varsa yeni sinyal gönderme
-    if symbol in active_signals:
-        print(f"⏸️ {symbol} → Zaten aktif sinyal var, yeni sinyal gönderilmiyor")
+    if symbol in positions or symbol in active_signals:
+        print(f"⏸️ {symbol} → Zaten aktif pozisyon/sinyal var, yeni sinyal gönderilmiyor")
         return False
     
     try:
-        # ETH/BTC için özel debug log
-        if symbol in ['ETHUSDT', 'BTCUSDT']:
-            print(f"🔍 {symbol} → create_signal_message_new_55 çağrılıyor...")
-            print(f"   Price: {price}, Volume: {volume_usd}")
-            print(f"   Current signals: {current_signals}")
-        
-        # Mesaj oluştur ve gönder
-        message, dominant_signal, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_55(symbol, price, current_signals, volume_usd, 2.0, 1.5)
-        
-        # ETH/BTC için özel debug log
-        if symbol in ['ETHUSDT', 'BTCUSDT']:
-            print(f"🔍 {symbol} → create_signal_message_new_55 sonucu:")
-            print(f"   Message: {'✅ Var' if message else '❌ Yok'}")
-            print(f"   Dominant signal: {dominant_signal}")
-            print(f"   Target price: {target_price}")
-            print(f"   Stop loss: {stop_loss}")
-            print(f"   Leverage: {leverage}")
-        
-        if message:
-            try:
-                entry_price_float = float(price) if price is not None else 0.0
-                target_price_float = float(target_price) if target_price is not None else 0.0
-                stop_loss_float = float(stop_loss) if stop_loss is not None else 0.0
-                leverage_int = int(leverage) if leverage is not None else 10
-                
-                # Geçerlilik kontrolü
-                if entry_price_float <= 0 or target_price_float <= 0 or stop_loss_float <= 0:
-                    print(f"⚠️ {symbol} - Geçersiz pozisyon verileri, pozisyon oluşturulmuyor")
-                    print(f"   Giriş: {entry_price_float}, Hedef: {target_price_float}, Stop: {stop_loss_float}")
-                    return
-                
-            except (ValueError, TypeError) as e:
-                print(f"❌ {symbol} - Fiyat verisi dönüşüm hatası: {e}")
-                print(f"   Raw values: price={price}, target={target_price}, stop={stop_loss}")
-                return
-            
-            # Pozisyonu kaydet - DOMINANT_SIGNAL KULLAN VE TÜM DEĞERLER FLOAT OLARAK
-            position = {
-                "type": str(dominant_signal),  # dominant_signal kullan, sinyal_tipi değil!
-                "target": target_price_float,  # Float olarak kaydet
-                "stop": stop_loss_float,       # Float olarak kaydet
-                "open_price": entry_price_float,  # Float olarak kaydet
-                "stop_str": str(stop_loss_str),
-                "signals": current_signals,
-                "leverage": leverage_int,      # Int olarak kaydet
-                "entry_time": str(datetime.now()),
-                "entry_timestamp": datetime.now(),
-            }
-            
-            # KRİTİK: Son bir kez daha kontrol et (race condition önleme)
-            # Eğer başka bir thread/process aynı anda bu sinyali işlediyse atla
-            if symbol in positions or symbol in active_signals:
-                print(f"⏸️ {symbol} → Race condition tespit edildi, sinyal zaten işlenmiş, gönderilmiyor")
-                return False
-            
-            # Pozisyonu dictionary'ye ekle
-            positions[symbol] = position
-            
-            # Aktif sinyali de oluştur
-            active_signals[symbol] = {
-                "symbol": symbol,
-                "type": str(dominant_signal),
-                "entry_price": format_price(entry_price_float, entry_price_float),
-                "entry_price_float": entry_price_float,
-                "target_price": format_price(target_price_float, entry_price_float),
-                "stop_loss": format_price(stop_loss_float, entry_price_float),
-                "signals": current_signals,
-                "leverage": leverage_int,
-                "signal_time": str(datetime.now()),
-                "current_price": format_price(entry_price_float, entry_price_float),
-                "current_price_float": entry_price_float,
-                "last_update": datetime.now().strftime('%Y-%m-%d %H:%M'),
-                "status": "active"
-            }
-            
-            # Pozisyonu ve aktif sinyali MongoDB'ye kaydet
-            save_positions_to_db({symbol: position})
-            save_active_signals_to_db({symbol: active_signals[symbol]})
-            
-            # İstatistikleri güncelle
-            stats["total_signals"] += 1
-            stats["active_signals_count"] = len(positions)  # positions kullan
-            
-            save_stats_to_db(stats)
-            
-            await send_signal_to_all_users(message)
-            
-            leverage_text = "10x" 
-            print(f"✅ {symbol} {sinyal_tipi} sinyali gönderildi! Kaldıraç: {leverage_text}")
-            
-            # Başarılı işlem sonucu döndür
-            return True
-            
+        # ATOMİK KİLİTLEME: Sinyali MongoDB'ye eklemeyi dene
+        # Eğer bu sembol için zaten bir sinyal varsa (başka bir process tarafından eklendi),
+        # DuplicateKeyError fırlatacak ve bu işlem durdurulacak.
+        active_signal_doc = {
+            "_id": f"active_signal_{symbol}",
+            "symbol": symbol,
+            "type": signal_data['dominant_signal'],
+            "entry_price": format_price(signal_data['price'], signal_data['price']),
+            "entry_price_float": signal_data['price'],
+            "target_price": "0", # Geçici, aşağıda güncellenecek
+            "stop_loss": "0",    # Geçici, aşağıda güncellenecek
+            "signals": signal_data['signals'],
+            "leverage": 10,      # Geçici, aşağıda güncellenecek
+            "signal_time": str(datetime.now()),
+            "current_price": format_price(signal_data['price'], signal_data['price']),
+            "current_price_float": signal_data['price'],
+            "last_update": str(datetime.now()),
+            "status": "pending" # Başlangıç durumu
+        }
+
+        try:
+            mongo_collection.insert_one(active_signal_doc)
+            print(f"✅ {symbol} → Atomik kilit oluşturuldu (yeni sinyal)")
+        except DuplicateKeyError:
+            print(f"⏸️ {symbol} → Race condition tespit edildi (DuplicateKeyError), sinyal zaten işleniyor/işlendi.")
+            return False
+
+        # Mesaj oluştur
+        message, dominant_signal, target_price, stop_loss, stop_loss_str, leverage, _ = create_signal_message_new_55(
+            symbol, signal_data['price'], signal_data['signals'], signal_data['volume_usd'], 2.0, 1.5
+        )
+
+        if not message:
+            # Mesaj oluşturulamadıysa, kilit dokümanını geri al
+            mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+            print(f"❌ {symbol} → Sinyal mesajı oluşturulamadı, kilit kaldırıldı")
+            return False
+
+        # Fiyatları ve kaldıraçları doğrula
+        entry_price_float = float(signal_data['price'])
+        target_price_float = float(target_price)
+        stop_loss_float = float(stop_loss)
+        leverage_int = int(leverage)
+
+        # Pozisyonu oluştur
+        position = {
+            "type": str(dominant_signal),
+            "target": target_price_float,
+            "stop": stop_loss_float,
+            "open_price": entry_price_float,
+            "stop_str": str(stop_loss_str),
+            "signals": signal_data['signals'],
+            "leverage": leverage_int,
+            "entry_time": str(datetime.now()),
+            "entry_timestamp": datetime.now(),
+        }
+
+        # Pozisyonu ve güncellenmiş aktif sinyali kaydet
+        save_positions_to_db({symbol: position}) # Bu fonksiyon artık active_signal'a dokunmuyor
+
+        # Aktif sinyal dokümanını son bilgilerle güncelle
+        update_set = {
+            "target_price": format_price(target_price_float, entry_price_float),
+            "stop_loss": format_price(stop_loss_float, entry_price_float),
+            "leverage": leverage_int,
+            "status": "active" # Artık aktif
+        }
+        mongo_collection.update_one(
+            {"_id": f"active_signal_{symbol}"},
+            {"$set": update_set}
+        )
+
+        # İstatistikleri güncelle
+        stats["total_signals"] += 1
+        stats["active_signals_count"] = len(positions) + 1
+        save_stats_to_db(stats)
+
+        # Sinyali gönder
+        await send_signal_to_all_users(message)
+
+        print(f"✅ {symbol} {signal_data['signal_type']} sinyali gönderildi! Kaldıraç: {leverage_int}x")
+
+        # Başarılı işlem sonucu döndür
+        return True
+
     except Exception as e:
         print(f"❌ {symbol} sinyal gönderme hatası: {e}")
+        # Hata durumunda oluşturulan kilit dokümanını temizle
+        mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
         return False
 
 async def check_existing_positions_and_cooldowns(positions, active_signals, stats, stop_cooldown):

@@ -78,7 +78,7 @@ def mark_signal_sent(symbol):
     recently_sent_signals[symbol] = datetime.now()
     # MongoDB'ye de kaydet
     try:
-        if mongo_collection:
+        if mongo_collection is not None:
             mongo_collection.update_one(
                 {"_id": f"last_sent_{symbol}"},
                 {"$set": {"sent_time": datetime.now().isoformat()}},
@@ -91,7 +91,7 @@ def load_recently_sent_from_db():
     """MongoDB'den son gönderilen sinyalleri yükle"""
     global recently_sent_signals
     try:
-        if mongo_collection:
+        if mongo_collection is not None:
             docs = mongo_collection.find({"_id": {"$regex": "^last_sent_"}})
             current_time = datetime.now()
             for doc in docs:

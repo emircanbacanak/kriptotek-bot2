@@ -4682,11 +4682,29 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             active_signals[symbol]['status'] = 'closing'
             active_signals[symbol]['trigger_type'] = trigger_type
         
-        # Mesaj tekrarını engellemek için kontrol
+        # KRİTİK: Mesaj tekrarını engellemek için kontrol (hemen başta, çift gönderme önleme)
         message_sent_key = f"message_sent_{symbol}_{trigger_type}"
         if message_sent_key in position_processing_flags:
-            print(f"⚠️ {symbol} - {trigger_type} mesajı zaten gönderilmiş, tekrar gönderilmiyor.")
-            return
+            flag_time = position_processing_flags[message_sent_key]
+            time_diff = (datetime.now() - flag_time).total_seconds()
+            if time_diff < 60:  # Son 60 saniye içinde gönderilmişse
+                print(f"⚠️ {symbol} - {trigger_type} mesajı zaten gönderilmiş ({int(time_diff)} saniye önce), tekrar gönderilmiyor.")
+                return
+        
+        # MongoDB'den de kontrol et (daha güvenli, kalıcı kontrol)
+        try:
+            if trigger_type == "take_profit":
+                existing_flag_doc = mongo_collection.find_one({"_id": f"target_message_sent_{symbol}"})
+                if existing_flag_doc:
+                    flag_timestamp = existing_flag_doc.get("timestamp")
+                    if flag_timestamp:
+                        flag_time = datetime.fromisoformat(flag_timestamp) if isinstance(flag_timestamp, str) else flag_timestamp
+                        time_diff = (datetime.now() - flag_time).total_seconds()
+                        if time_diff < 60:  # Son 60 saniye içinde gönderilmişse
+                            print(f"⏸️ {symbol} → Hedef mesajı MongoDB'de kayıtlı ({int(time_diff)} saniye önce), çift gönderme önlendi")
+                            return
+        except Exception as e:
+            print(f"⚠️ {symbol} → MongoDB hedef mesaj kontrolü hatası: {e}")
         try:
             if position_data:
                 entry_price_raw = position_data.get('open_price', 0)
@@ -4851,9 +4869,24 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                 f"📈 <b>Giriş:</b> ${entry_price:.6f}\n"
                 f"💵 <b>Çıkış:</b> ${exit_price:.6f}"
             )
+            
+            # KRİTİK: Mesajı kanala ve gruba gönder (tüm kullanıcılara ve gruplara)
             await send_signal_to_all_users(message)
-            # Mesaj gönderildi flag'ini set et
-            position_processing_flags[message_sent_key] = datetime.now()
+            
+            # KRİTİK: Mesaj gönderildi flag'ini set et (hemen, çift gönderme önleme)
+            current_time = datetime.now()
+            position_processing_flags[message_sent_key] = current_time
+            
+            # MongoDB'ye de kaydet (kalıcı kontrol için - hemen, çift gönderme önleme)
+            try:
+                mongo_collection.update_one(
+                    {"_id": f"target_message_sent_{symbol}"},
+                    {"$set": {"symbol": symbol, "timestamp": current_time, "trigger_type": trigger_type}},
+                    upsert=True
+                )
+                print(f"✅ {symbol} → Hedef mesaj flag'i MongoDB'ye kaydedildi (çift gönderme önlendi)")
+            except Exception as e:
+                print(f"⚠️ {symbol} → Hedef mesaj flag'i MongoDB'ye kaydedilemedi: {e}")
             # Bot sahibine hedef mesajı gönderme
         
         elif trigger_type == "stop_loss":

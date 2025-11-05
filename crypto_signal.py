@@ -53,6 +53,61 @@ mongo_collection = None
 
 client = Client()
 
+# KRİTİK: Son gönderilen sinyalleri takip et (duplicate önleme)
+recently_sent_signals = {}  # {symbol: datetime} - Son 10 dakika içinde gönderilen sinyaller
+
+def check_recently_sent(symbol, minutes=10):
+    """Son N dakika içinde bu coin için sinyal gönderilmiş mi kontrol et"""
+    global recently_sent_signals
+    if symbol not in recently_sent_signals:
+        return False
+    
+    sent_time = recently_sent_signals[symbol]
+    if isinstance(sent_time, str):
+        try:
+            sent_time = datetime.fromisoformat(sent_time.replace('Z', '+00:00'))
+        except:
+            return False
+    
+    time_diff = (datetime.now() - sent_time).total_seconds() / 60
+    return time_diff < minutes
+
+def mark_signal_sent(symbol):
+    """Sinyal gönderildiğini işaretle"""
+    global recently_sent_signals
+    recently_sent_signals[symbol] = datetime.now()
+    # MongoDB'ye de kaydet
+    try:
+        if mongo_collection:
+            mongo_collection.update_one(
+                {"_id": f"last_sent_{symbol}"},
+                {"$set": {"sent_time": datetime.now().isoformat()}},
+                upsert=True
+            )
+    except Exception as e:
+        print(f"⚠️ Son gönderim kaydı hatası {symbol}: {e}")
+
+def load_recently_sent_from_db():
+    """MongoDB'den son gönderilen sinyalleri yükle"""
+    global recently_sent_signals
+    try:
+        if mongo_collection:
+            docs = mongo_collection.find({"_id": {"$regex": "^last_sent_"}})
+            current_time = datetime.now()
+            for doc in docs:
+                symbol = doc["_id"].replace("last_sent_", "")
+                sent_time_str = doc.get("sent_time", "")
+                if sent_time_str:
+                    try:
+                        sent_time = datetime.fromisoformat(sent_time_str.replace('Z', '+00:00'))
+                        # 10 dakikadan eski kayıtları temizle
+                        if (current_time - sent_time).total_seconds() < 600:
+                            recently_sent_signals[symbol] = sent_time
+                    except:
+                        pass
+    except Exception as e:
+        print(f"⚠️ Son gönderim kayıtları yüklenirken hata: {e}")
+
 # Optimizasyon: Fiyat temizleme helper fonksiyonu
 def clean_price(price_raw, default=0.0):
     """Fiyat değerini temizler ve float'a çevirir - optimize edilmiş versiyon"""
@@ -2292,8 +2347,17 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
     symbol = signal_data['symbol']
     
     # KRİTİK: Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa yeni sinyal gönderme
-    if symbol in positions or symbol in active_signals:
-        print(f"⏸️ {symbol} → Zaten aktif pozisyon/sinyal var, yeni sinyal gönderilmiyor")
+    if symbol in positions:
+        print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal gönderilmiyor")
+        return False
+    
+    if symbol in active_signals:
+        print(f"⏸️ {symbol} → Zaten aktif sinyal var, yeni sinyal gönderilmiyor")
+        return False
+    
+    # KRİTİK: Son 10 dakika içinde gönderilmiş mi kontrol et
+    if check_recently_sent(symbol, minutes=10):
+        print(f"⏸️ {symbol} → Son 10 dakika içinde sinyal gönderilmiş, duplicate önleme, gönderilmiyor")
         return False
     
     try:
@@ -2374,8 +2438,21 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         stats["active_signals_count"] = len(positions) + 1
         save_stats_to_db(stats)
 
+        # KRİTİK: Mesajı göndermeden ÖNCE son bir kontrol daha (ultra güvenlik)
+        if symbol in positions or symbol in active_signals or check_recently_sent(symbol, minutes=10):
+            print(f"⏸️ {symbol} → Son kontrol: Zaten işlenmiş, mesaj gönderilmiyor")
+            # Pozisyonu ve aktif sinyali geri al
+            positions.pop(symbol, None)
+            active_signals.pop(symbol, None)
+            # Kilit dokümanını temizle
+            mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+            return False
+
         # Sinyali gönder
         await send_signal_to_all_users(message)
+        
+        # KRİTİK: Mesaj gönderildikten HEMEN SONRA işaretle (duplicate önleme)
+        mark_signal_sent(symbol)
 
         print(f"✅ {symbol} {signal_data['signal_type']} sinyali gönderildi! Kaldıraç: {leverage_int}x")
 
@@ -2785,6 +2862,10 @@ async def signal_processing_loop():
         # Bot başlangıcında eski sinyal cooldown'ları temizle
         print("🧹 Bot başlangıcında eski sinyal cooldown'ları temizleniyor...")
         await clear_cooldown_status()
+        
+        # Son gönderilen sinyalleri yükle
+        load_recently_sent_from_db()
+        print(f"📋 Son gönderilen sinyaller yüklendi: {len(recently_sent_signals)} coin")
     
     # Periyodik pozisyon kontrolü için sayaç
     position_check_counter = 0
@@ -3042,34 +3123,38 @@ async def signal_processing_loop():
             else:
                 print("ℹ️ Cooldown süresi biten sinyal bulunamadı")
             
-            # 20'li gruplar halinde işleme sistemi
-            batch_size = 20
-            total_batches = (len(symbols) + batch_size - 1) // batch_size
-            found_signals = {}  # Bulunan tüm sinyaller (işlenmiş olanlar hariç)
-            already_processed = set()  # KRİTİK: Bu döngüde işlenmiş sinyaller (tekrar gönderilmesin)
+            # KRİTİK: 10'luk batch sistemi - Her batch'te en hacimli sinyal gönderilir
+            # Son gönderilen sinyalleri yükle
+            load_recently_sent_from_db()
             
-            print(f"🔄 {total_batches} grup halinde işlenecek (her grup {batch_size} kripto)")
+            # 10'luk gruplar halinde işleme sistemi
+            batch_size = 10
+            total_batches = (len(symbols) + batch_size - 1) // batch_size
+            processed_count = 0  # Bu döngüde işlenen sinyal sayacı
+            
+            print(f"🔄 {total_batches} batch halinde işlenecek (her batch {batch_size} kripto)")
             
             for batch_num in range(total_batches):
                 start_idx = batch_num * batch_size
                 end_idx = min(start_idx + batch_size, len(symbols))
                 batch_symbols = symbols[start_idx:end_idx]
                 
-                print(f"📊 Grup {batch_num + 1}/{total_batches}: {len(batch_symbols)} kripto kontrol ediliyor...")
+                print(f"📊 Batch {batch_num + 1}/{total_batches}: {len(batch_symbols)} kripto kontrol ediliyor...")
                 
-                # Bu grup için sinyal arama
-                batch_signals = {}
+                # Bu batch için sinyal arama
+                batch_signals = {}  # {symbol: {signal_data, volume}}
+                
                 for symbol in batch_symbols:
-                    # Halihazırda pozisyon varsa veya stop cooldown'daysa atla
+                    # Halihazırda pozisyon varsa atla
                     if symbol in positions:
                         continue
                     
-                    # KRİTİK: Bu döngüde zaten işlenmiş sinyalleri atla
-                    if symbol in already_processed:
-                        print(f"⏸️ {symbol} → Bu döngüde zaten işlendi, tekrar işlenmiyor")
+                    # KRİTİK: Son 10 dakika içinde bu coin için sinyal gönderilmiş mi?
+                    if check_recently_sent(symbol, minutes=10):
+                        print(f"⏸️ {symbol} → Son 10 dakika içinde sinyal gönderilmiş, atlanıyor")
                         continue
                     
-                    # STOP COOLDOWN KONTROLÜ - 4 saat boyunca kesinlikle sinyal verilmez!
+                    # STOP COOLDOWN KONTROLÜ - 8 saat boyunca kesinlikle sinyal verilmez!
                     if check_cooldown(symbol, stop_cooldown, CONFIG["COOLDOWN_HOURS"]):
                         continue
                     
@@ -3095,106 +3180,74 @@ async def signal_processing_loop():
                         else:
                             print(f"   🎯 15m mum kontrolü başarılı - Sinyal kalitesi onaylandı!")
                         
-                        # TÜM SİNYALLER (major coinler dahil) batch_signals'a eklenir
-                        batch_signals[symbol] = signal_result
+                        # Hacim bilgisini de ekle
+                        batch_signals[symbol] = {
+                            'signal_data': signal_result,
+                            'volume': signal_result.get('volume_usd', 0)
+                        }
                 
-                # Bu grup için sinyal işleme
+                # Bu batch için sinyal işleme
                 if batch_signals:
-                    print(f"📊 Grup {batch_num + 1}: {len(batch_signals)} sinyal bulundu")
+                    print(f"📊 Batch {batch_num + 1}: {len(batch_signals)} sinyal bulundu")
                     
-                    # Major coinler için özel işlem - hemen gönder
-                    major_coin_signals = {k: v for k, v in batch_signals.items() if k in ['BTCUSDT', 'ETHUSDT']}
-                    regular_signals = {k: v for k, v in batch_signals.items() if k not in ['BTCUSDT', 'ETHUSDT']}
+                    # Hacim bazlı sırala
+                    sorted_batch_signals = sorted(
+                        batch_signals.items(),
+                        key=lambda item: item[1]['volume'],
+                        reverse=True
+                    )
                     
-                    # Major coinler varsa hemen işle
-                    if major_coin_signals:
-                        print(f"🚀 MAJOR COIN SİNYALLERİ BULUNDU! Hemen gönderiliyor...")
-                        for symbol, signal_data in major_coin_signals.items():
-                            # KRİTİK: Pozisyon kontrolü - eğer başka bir batch'te işlendiyse atla
-                            if symbol in positions or symbol in already_processed:
-                                print(f"⏸️ {symbol} → Zaten işlenmiş veya pozisyon var, atlanıyor")
-                                continue
-                            
-                            print(f"   ⚡ {symbol} major coin sinyali hemen gönderiliyor!")
-                            
-                            # Hacim verisini çek
-                            volumes = await get_volumes_for_symbols([symbol])
-                            volume = volumes.get(symbol, 0)
-                            
-                            # Major coin sinyalini hemen işle
-                            await process_selected_signal(signal_data, positions, active_signals, stats)
-                            
-                            # KRİTİK: İşlenmiş olarak işaretle (tekrar gönderilmesin)
-                            already_processed.add(symbol)
-                            
-                            # Cooldown'a ekle (30 dakika)
-                            await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
+                    # En yüksek hacimli sinyali seç
+                    best_signal_symbol, best_signal_info = sorted_batch_signals[0]
+                    best_signal_data = best_signal_info['signal_data']
+                    best_signal_volume = best_signal_info['volume']
                     
-                    # Normal coinler için hacim bazlı seçim
-                    if regular_signals:
-                        # Hacim verilerini çek
-                        volumes = await get_volumes_for_symbols(list(regular_signals.keys()))
+                    # KRİTİK: Son bir kez daha kontrol et (race condition önleme)
+                    if best_signal_symbol in positions:
+                        print(f"⏸️ {best_signal_symbol} → Pozisyon var, atlanıyor")
+                        continue
+                    
+                    if check_recently_sent(best_signal_symbol, minutes=10):
+                        print(f"⏸️ {best_signal_symbol} → Son 10 dakika içinde sinyal gönderilmiş, atlanıyor")
+                        continue
+                    
+                    print(f"🏆 Batch {batch_num + 1} en hacimli sinyal: {best_signal_symbol} (Hacim: {best_signal_volume:,.0f})")
+                    
+                    # Sinyali işle ve gönder
+                    result = await process_selected_signal(best_signal_data, positions, active_signals, stats)
+                    
+                    if result:
+                        # KRİTİK: Gönderildiğini işaretle (duplicate önleme)
+                        mark_signal_sent(best_signal_symbol)
+                        processed_count += 1
                         
-                        # Hacim verisine göre sırala
-                        sorted_regular_signals = sorted(
-                            regular_signals.items(),
-                            key=lambda item: volumes.get(item[0], 0),
-                            reverse=True
-                        )
+                        # Cooldown'a ekle (30 dakika)
+                        await set_signal_cooldown_to_db([best_signal_symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
                         
-                        # En yüksek hacimli sinyali seç ve anında gönder
-                        best_signal = sorted_regular_signals[0]
-                        symbol, signal_data = best_signal
+                        # Pozisyonları ve aktif sinyalleri güncelle (global değişkenlere de)
+                        global_positions = dict(positions)
+                        global_active_signals = dict(active_signals)
                         
-                        # KRİTİK: Pozisyon kontrolü - eğer başka bir batch'te işlendiyse atla
-                        if symbol in positions or symbol in already_processed:
-                            print(f"⏸️ {symbol} → Zaten işlenmiş veya pozisyon var, atlanıyor")
-                        else:
-                            volume = volumes.get(symbol, 0)
-                            print(f"🏆 Grup {batch_num + 1} en iyi normal sinyal: {symbol} (Hacim: {volume:,.0f})")
-                            
-                            # Sinyali hemen işle/gönder
-                            await process_selected_signal(signal_data, positions, active_signals, stats)
-                            processed_signals_in_loop += 1
-                            
-                            # KRİTİK: İşlenmiş olarak işaretle (tekrar gönderilmesin)
-                            already_processed.add(symbol)
-                            
-                            # Aynı sembol için tekrar spam'ı önlemek adına kısa cooldown uygula
-                            await set_signal_cooldown_to_db([symbol], timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
+                        print(f"✅ {best_signal_symbol} sinyali gönderildi, veritabanı güncellendi")
+                    else:
+                        print(f"⚠️ {best_signal_symbol} sinyali işlenemedi (muhtemelen zaten gönderilmiş)")
+                    
+                    # Batch'teki diğer sinyaller için cooldown uygula (30 dakika)
+                    other_symbols = [s for s in batch_signals.keys() if s != best_signal_symbol]
+                    if other_symbols:
+                        await set_signal_cooldown_to_db(other_symbols, timedelta(minutes=CONFIG["COOLDOWN_MINUTES"]))
+                        print(f"⏳ Batch {batch_num + 1}'deki diğer {len(other_symbols)} sinyal 30 dakika cooldown'a alındı")
                 else:
-                    print(f"📊 Grup {batch_num + 1}: Sinyal bulunamadı")
+                    print(f"📊 Batch {batch_num + 1}: Sinyal bulunamadı")
             
-            # KRİTİK: Bulunan sinyalleri işle (sadece henüz işlenmemiş olanlar)
-            # Batch içinde işlenen sinyaller zaten gönderildi, burada sadece kontrol ediyoruz
-            if not found_signals and not already_processed:
+            if processed_count == 0:
                 print("🔍 Yeni sinyal bulunamadı.")
                 print("   ℹ️ Bazı sinyaller 7/7 kuralını sağladı ancak 15m mum rengi uygun değildi")
                 print("   🔄 Bu sinyaller sonraki kontrolde tekrar değerlendirilecek")
-                # Sinyal bulunamadığında cooldown'ı temizle (normal çalışma modunda)
                 await clear_cooldown_status()
                 continue
             
-            # İşlenmiş sinyal sayısını göster
-            if already_processed:
-                print(f"✅ Bu döngüde {len(already_processed)} sinyal işlendi ve gönderildi: {', '.join(list(already_processed)[:5])}")
-                if len(already_processed) > 5:
-                    print(f"   ... ve {len(already_processed) - 5} tane daha")
-            
-            # Eğer found_signals varsa (eski kod için uyumluluk), ama artık kullanılmıyor
-            # Çünkü tüm sinyaller batch içinde işleniyor
-            if found_signals:
-                print(f"⚠️ UYARI: found_signals içinde {len(found_signals)} sinyal var, ama bunlar zaten batch içinde işlenmiş olmalı")
-                # Bu sinyaller zaten işlenmiş olmalı, tekrar işlemeyelim
-                for symbol in list(found_signals.keys()):
-                    if symbol in already_processed:
-                        print(f"⏸️ {symbol} → Zaten işlenmiş, found_signals'dan kaldırılıyor")
-                        del found_signals[symbol]
-                    elif symbol in positions:
-                        print(f"⏸️ {symbol} → Zaten pozisyon var, found_signals'dan kaldırılıyor")
-                        del found_signals[symbol]
-            
-            print(f"✅ Tarama döngüsü tamamlandı. Bu turda {processed_signals_in_loop} yeni sinyal işlendi.")
+            print(f"✅ Tarama döngüsü tamamlandı. Bu turda {processed_count} yeni sinyal işlendi ve gönderildi.")
 
             if is_first:
                 print(f"💾 İlk çalıştırma: {len(previous_signals)} sinyal kaydediliyor...")

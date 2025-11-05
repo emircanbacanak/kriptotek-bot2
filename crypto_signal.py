@@ -2821,7 +2821,13 @@ async def signal_processing_loop():
         previous_signals = load_previous_signals_from_db()
         
         # Aktif sinyalleri DB'den yükle
-        active_signals = load_active_signals_from_db()
+        # KRİTİK: Aktif sinyalleri yüklerken mevcut aktif sinyalleri koru
+        db_active_signals = load_active_signals_from_db()
+        if db_active_signals:
+            active_signals = db_active_signals
+        else:
+            # Eğer DB'de aktif sinyal yoksa, boş dict kullan ama mevcut aktif sinyalleri koru
+            active_signals = active_signals if active_signals else {}
         
         # Eğer DB'de aktif sinyal yoksa, pozisyonlardan oluştur
         if not active_signals:
@@ -2883,9 +2889,47 @@ async def signal_processing_loop():
             # DÖNGÜ BAŞINDA SÜRESİ DOLAN COOLDOWN'LARI TEMİZLE
             await cleanup_expired_stop_cooldowns()
             
-            positions = load_positions_from_db()
-            active_signals = load_active_signals_from_db()
-            stats = load_stats_from_db()
+            # KRİTİK: Pozisyonları yükle ama mevcut pozisyonları koru
+            loaded_positions = load_positions_from_db()
+            if loaded_positions:
+                # Sadece yeni pozisyonları ekle, mevcut pozisyonları değiştirme
+                for symbol, pos in loaded_positions.items():
+                    if symbol not in positions:
+                        positions[symbol] = pos
+            
+            # KRİTİK: Aktif sinyalleri yükle ama mevcut aktif sinyalleri koru
+            loaded_active_signals = load_active_signals_from_db()
+            if loaded_active_signals:
+                # Mevcut aktif sinyalleri koru, yeni eklenenleri ekle
+                for symbol, signal in loaded_active_signals.items():
+                    if symbol not in active_signals:
+                        active_signals[symbol] = signal
+                    # Eğer pozisyon varsa ama aktif sinyal yoksa, aktif sinyali koru
+                    if symbol in positions and symbol in active_signals:
+                        # Mevcut aktif sinyali koru
+                        pass
+            
+            # KRİTİK: Stats'i yükle ama mevcut stats'i koru (sıfırlanmayı önle)
+            loaded_stats = load_stats_from_db()
+            if loaded_stats:
+                # Mevcut stats'i koru, sadece eksik veya daha büyük değerleri güncelle
+                for key in ['total_signals', 'successful_signals', 'failed_signals', 'total_profit_loss']:
+                    if key in loaded_stats:
+                        # Mevcut stats daha büyükse koru, değilse güncelle
+                        if key not in stats or stats.get(key, 0) < loaded_stats.get(key, 0):
+                            stats[key] = loaded_stats[key]
+            else:
+                # Eğer DB'de stats yoksa, mevcut stats'i koru
+                if not stats:
+                    stats = {
+                        "total_signals": 0,
+                        "successful_signals": 0,
+                        "failed_signals": 0,
+                        "total_profit_loss": 0.0,
+                        "active_signals_count": len(active_signals),
+                        "tracked_coins_count": 0
+                    }
+            
             stop_cooldown = load_stop_cooldown_from_db()
             
             # Orphaned signals kontrolü - pozisyonu olmayan aktif sinyalleri temizle
@@ -3206,6 +3250,20 @@ async def signal_processing_loop():
                     if best_signal_symbol in positions:
                         print(f"⏸️ {best_signal_symbol} → Pozisyon var, atlanıyor")
                         continue
+                    
+                    # KRİTİK: Aktif sinyal kontrolü - hem dictionary'den hem MongoDB'den
+                    if best_signal_symbol in active_signals:
+                        print(f"⏸️ {best_signal_symbol} → Zaten aktif sinyal var (dictionary), atlanıyor")
+                        continue
+                    
+                    # MongoDB'den de kontrol et (dictionary güncel olmayabilir)
+                    try:
+                        existing_active_signal = mongo_collection.find_one({"_id": f"active_signal_{best_signal_symbol}"})
+                        if existing_active_signal:
+                            print(f"⏸️ {best_signal_symbol} → Zaten aktif sinyal var (MongoDB), atlanıyor")
+                            continue
+                    except Exception as e:
+                        print(f"⚠️ {best_signal_symbol} → MongoDB aktif sinyal kontrolü hatası: {e}")
                     
                     if check_recently_sent(best_signal_symbol, minutes=10):
                         print(f"⏸️ {best_signal_symbol} → Son 10 dakika içinde sinyal gönderilmiş, atlanıyor")
@@ -3620,9 +3678,25 @@ async def signal_processing_loop():
             print(f"📊 İSTATİSTİK ÖZETİ:")
             
             # Veritabanından güncel istatistikleri yükle
+            # KRİTİK: Mevcut stats'i koru, sadece eksik alanları güncelle
             db_stats = load_stats_from_db()
             if db_stats:
-                stats = db_stats
+                # Mevcut stats'i koru, sadece eksik alanları db_stats'den doldur
+                for key, value in db_stats.items():
+                    if key not in stats or stats[key] == 0:
+                        # Eğer stats'te yoksa veya 0 ise, db_stats'den al
+                        if key in ['total_signals', 'successful_signals', 'failed_signals', 'total_profit_loss']:
+                            if db_stats.get(key, 0) > 0:
+                                stats[key] = db_stats[key]
+                    else:
+                        # Mevcut stats daha büyükse koru (sıfırlanmayı önle)
+                        if key in ['total_signals', 'successful_signals', 'failed_signals', 'total_profit_loss']:
+                            if stats[key] > db_stats.get(key, 0):
+                                # Mevcut stats daha büyükse koru
+                                pass
+                            else:
+                                # db_stats daha büyükse güncelle
+                                stats[key] = db_stats[key]
             
             # Güncel aktif sinyal sayısını al (veritabanından)
             try:

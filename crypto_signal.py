@@ -2361,12 +2361,17 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
     """Seçilen sinyali işler ve gönderir."""
     symbol = signal_data['symbol']
     
+    # KRİTİK: Önce MongoDB'den güncel verileri yükle (race condition önleme)
+    current_positions = load_positions_from_db()
+    current_active_signals = load_active_signals_from_db()
+    load_recently_sent_from_db()  # Güncel recently_sent_signals yükle
+    
     # KRİTİK: Aktif pozisyon kontrolü - eğer zaten aktif pozisyon varsa yeni sinyal gönderme
-    if symbol in positions:
+    if symbol in current_positions or symbol in positions:
         print(f"⏸️ {symbol} → Zaten aktif pozisyon var, yeni sinyal gönderilmiyor")
         return False
     
-    if symbol in active_signals:
+    if symbol in current_active_signals or symbol in active_signals:
         print(f"⏸️ {symbol} → Zaten aktif sinyal var, yeni sinyal gönderilmiyor")
         return False
     
@@ -2454,7 +2459,12 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         save_stats_to_db(stats)
 
         # KRİTİK: Mesajı göndermeden ÖNCE son bir kontrol daha (ultra güvenlik)
-        if symbol in positions or symbol in active_signals or check_recently_sent(symbol, minutes=10):
+        # MongoDB'den tekrar güncel verileri yükle
+        current_positions_check = load_positions_from_db()
+        current_active_signals_check = load_active_signals_from_db()
+        load_recently_sent_from_db()  # Güncel recently_sent_signals yükle
+        
+        if symbol in current_positions_check or symbol in positions or symbol in current_active_signals_check or symbol in active_signals or check_recently_sent(symbol, minutes=10):
             print(f"⏸️ {symbol} → Son kontrol: Zaten işlenmiş, mesaj gönderilmiyor")
             # Pozisyonu ve aktif sinyali geri al
             positions.pop(symbol, None)
@@ -2468,6 +2478,10 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         
         # KRİTİK: Mesaj gönderildikten HEMEN SONRA işaretle (duplicate önleme)
         mark_signal_sent(symbol)
+        
+        # KRİTİK: recently_sent_signals'ı hemen güncelle (diğer batch'ler için)
+        global recently_sent_signals
+        recently_sent_signals[symbol] = datetime.now()
 
         print(f"✅ {symbol} {signal_data['signal_type']} sinyali gönderildi! Kaldıraç: {leverage_int}x")
 
@@ -3200,6 +3214,9 @@ async def signal_processing_loop():
                 
                 print(f"📊 Batch {batch_num + 1}/{total_batches}: {len(batch_symbols)} kripto kontrol ediliyor...")
                 
+                # KRİTİK: Her batch'ten önce son gönderilen sinyalleri yeniden yükle (güncel veri için)
+                load_recently_sent_from_db()
+                
                 # Bu batch için sinyal arama
                 batch_signals = {}  # {symbol: {signal_data, volume}}
                 
@@ -3290,8 +3307,10 @@ async def signal_processing_loop():
                     result = await process_selected_signal(best_signal_data, positions, active_signals, stats)
                     
                     if result:
-                        # KRİTİK: Gönderildiğini işaretle (duplicate önleme)
-                        mark_signal_sent(best_signal_symbol)
+                        # NOT: mark_signal_sent zaten process_selected_signal içinde çağrılıyor, tekrar çağırmaya gerek yok
+                        # Ancak positions ve active_signals güncellenmiş olabilir, tekrar yükle
+                        positions = load_positions_from_db()
+                        active_signals = load_active_signals_from_db()
                         processed_count += 1
                         
                         # Cooldown'a ekle (30 dakika)

@@ -423,16 +423,12 @@ def save_active_signals_to_db(active_signals):
                 print("❌ MongoDB bağlantısı kurulamadı, aktif sinyaller kaydedilemedi")
                 return False
         
-        # Eğer boş sözlük ise, tüm aktif sinyal dokümanlarını sil
+        # KRİTİK: Boş sözlük gönderildiğinde hiçbir şey yapma - tüm aktif sinyalleri silme!
+        # Bu fonksiyon sadece mevcut aktif sinyalleri kaydetmek için kullanılmalı
+        # Eğer gerçekten tüm aktif sinyalleri silmek gerekiyorsa, bu ayrı bir fonksiyon olmalı
         if not active_signals:
-            try:
-                delete_result = mongo_collection.delete_many({"_id": {"$regex": "^active_signal_"}})
-                deleted_count = getattr(delete_result, "deleted_count", 0)
-                print(f"🧹 Boş aktif sinyal listesi için {deleted_count} doküman silindi")
-                return True
-            except Exception as e:
-                print(f"❌ Boş aktif sinyal temizleme hatası: {e}")
-                return False
+            print("⚠️ Boş aktif sinyal listesi gönderildi - hiçbir şey yapılmıyor (tüm aktif sinyaller korunuyor)")
+            return True
         
         for symbol, signal in active_signals.items():
             signal_doc = {
@@ -2401,6 +2397,10 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             "status": "pending" # Başlangıç durumu
         }
 
+        # Signal time'ı kaydet (sonraki kontroller için)
+        current_signal_time = str(datetime.now())
+        active_signal_doc["signal_time"] = current_signal_time
+        
         try:
             mongo_collection.insert_one(active_signal_doc)
             print(f"✅ {symbol} → Atomik kilit oluşturuldu (yeni sinyal)")
@@ -2425,6 +2425,9 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         stop_loss_float = float(stop_loss)
         leverage_int = int(leverage)
 
+        # Entry time'ı kaydet (sonraki kontroller için)
+        current_entry_time = str(datetime.now())
+
         # Pozisyonu oluştur
         position = {
             "type": str(dominant_signal),
@@ -2434,7 +2437,7 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
             "stop_str": str(stop_loss_str),
             "signals": signal_data['signals'],
             "leverage": leverage_int,
-            "entry_time": str(datetime.now()),
+            "entry_time": current_entry_time,
             "entry_timestamp": datetime.now(),
         }
 
@@ -2459,19 +2462,59 @@ async def process_selected_signal(signal_data, positions, active_signals, stats)
         save_stats_to_db(stats)
 
         # KRİTİK: Mesajı göndermeden ÖNCE son bir kontrol daha (ultra güvenlik)
-        # MongoDB'den tekrar güncel verileri yükle
-        current_positions_check = load_positions_from_db()
-        current_active_signals_check = load_active_signals_from_db()
+        # NOT: Yeni eklenen pozisyon/aktif sinyal kendisi için kontrol yapılmamalı!
+        # Sadece başka bir işlem tarafından eklenmiş olanlar kontrol edilmeli
         load_recently_sent_from_db()  # Güncel recently_sent_signals yükle
         
-        if symbol in current_positions_check or symbol in positions or symbol in current_active_signals_check or symbol in active_signals or check_recently_sent(symbol, minutes=10):
-            print(f"⏸️ {symbol} → Son kontrol: Zaten işlenmiş, mesaj gönderilmiyor")
+        # Son 10 dakika içinde gönderilmiş mi kontrol et (bu kontrol yapılmalı)
+        if check_recently_sent(symbol, minutes=10):
+            print(f"⏸️ {symbol} → Son kontrol: Son 10 dakika içinde sinyal gönderilmiş, mesaj gönderilmiyor")
             # Pozisyonu ve aktif sinyali geri al
             positions.pop(symbol, None)
             active_signals.pop(symbol, None)
             # Kilit dokümanını temizle
             mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+            # Position'ı da sil
+            mongo_collection.delete_one({"_id": f"position_{symbol}"})
             return False
+        
+        # MongoDB'den güncel verileri yükle ve kontrol et (sadece başka bir işlem tarafından eklenmiş olanlar)
+        # NOT: Yeni eklenen pozisyon/aktif sinyal kendisi için kontrol yapılmamalı!
+        # Çünkü biz az önce ekledik, bu yüzden MongoDB'de görünmesi normal
+        # Sadece başka bir işlem tarafından eklenmiş olanlar kontrol edilmeli
+        # Bu kontrol için: MongoDB'deki pozisyon/aktif sinyal'in entry_time'ı bizim eklediğimiz zamandan farklı mı?
+        try:
+            existing_position = mongo_collection.find_one({"_id": f"position_{symbol}"})
+            existing_active_signal = mongo_collection.find_one({"_id": f"active_signal_{symbol}"})
+            
+            # Eğer MongoDB'de pozisyon/aktif sinyal varsa ve entry_time'ı bizim eklediğimiz zamandan farklıysa
+            # (yani başka bir işlem tarafından eklenmişse), reddet
+            if existing_position:
+                existing_entry_time = existing_position.get("data", {}).get("entry_time", "")
+                current_entry_time = position.get("entry_time", "")
+                # Eğer entry_time farklıysa, başka bir işlem tarafından eklenmiş demektir
+                if existing_entry_time and existing_entry_time != current_entry_time:
+                    print(f"⏸️ {symbol} → Son kontrol: Başka bir işlem tarafından pozisyon eklenmiş, mesaj gönderilmiyor")
+                    # Pozisyonu ve aktif sinyali geri al
+                    positions.pop(symbol, None)
+                    active_signals.pop(symbol, None)
+                    # Kilit dokümanını temizle (bizim eklediğimizi)
+                    mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                    return False
+            
+            if existing_active_signal:
+                existing_signal_time = existing_active_signal.get("signal_time", "")
+                # Eğer signal_time farklıysa, başka bir işlem tarafından eklenmiş demektir
+                if existing_signal_time and existing_signal_time != current_signal_time:
+                    print(f"⏸️ {symbol} → Son kontrol: Başka bir işlem tarafından aktif sinyal eklenmiş, mesaj gönderilmiyor")
+                    # Pozisyonu ve aktif sinyali geri al
+                    positions.pop(symbol, None)
+                    active_signals.pop(symbol, None)
+                    # Kilit dokümanını temizle (bizim eklediğimizi)
+                    mongo_collection.delete_one({"_id": f"active_signal_{symbol}"})
+                    return False
+        except Exception as e:
+            print(f"⚠️ {symbol} → Son kontrol sırasında hata: {e}, devam ediliyor")
 
         # Sinyali gönder
         await send_signal_to_all_users(message)
@@ -4976,12 +5019,10 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
             else:
                 print(f"⚠️ {symbol} position belgesi zaten silinmiş veya bulunamadı")
             
-            # EK GÜVENLİK: Boş aktif sinyal listesi kaydet (eğer başka aktif sinyal kalmadıysa)
-            remaining_positions = mongo_collection.count_documents({"_id": {"$regex": "^position_"}})
-            if remaining_positions == 0:
-                # Tüm pozisyonlar kapandıysa, boş aktif sinyal listesi kaydet
-                save_active_signals_to_db({})
-                print(f"🧹 Tüm pozisyonlar kapandı, boş aktif sinyal listesi kaydedildi")
+            # NOT: save_active_signals_to_db({}) çağrısı kaldırıldı
+            # Çünkü boş sözlük gönderildiğinde artık hiçbir şey yapmıyor
+            # Zaten active_signal_{symbol} dokümanı yukarıda silindi
+            # Eğer başka aktif sinyal kalmadıysa, onlar da kendi close_position çağrılarında silinecek
                 
         except Exception as e:
             print(f"❌ {symbol} veritabanından silinirken hata: {e}")

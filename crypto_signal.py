@@ -204,8 +204,24 @@ async def api_request_with_retry(session, url, ssl=False, max_retries=None):
             else:
                 raise Exception("API timeout hatası")
                 
+        except (aiohttp.ClientConnectorError, aiohttp.ClientError, OSError) as e:
+            error_msg = str(e)
+            # Bağlantı hatalarını daha anlamlı hale getir
+            if "Cannot connect to host" in error_msg or "Name or service not known" in error_msg:
+                print(f"⚠️ Binance API bağlantı hatası: {error_msg}, Deneme {attempt+1}/{max_retries}")
+            else:
+                print(f"⚠️ API isteği hatası: {error_msg}, Deneme {attempt+1}/{max_retries}")
+            
+            if attempt < max_retries - 1:
+                delay = CONFIG["API_RETRY_DELAYS"][min(attempt, len(CONFIG["API_RETRY_DELAYS"])-1)]
+                await asyncio.sleep(delay)
+                continue
+            else:
+                raise Exception(f"Binance API bağlantı hatası: {error_msg}")
+                
         except Exception as e:
-            print(f"⚠️ API isteği hatası: {e}, Deneme {attempt+1}/{max_retries}")
+            error_msg = str(e)
+            print(f"⚠️ API isteği hatası: {error_msg}, Deneme {attempt+1}/{max_retries}")
             if attempt < max_retries - 1:
                 delay = CONFIG["API_RETRY_DELAYS"][min(attempt, len(CONFIG["API_RETRY_DELAYS"])-1)]
                 await asyncio.sleep(delay)
@@ -1776,19 +1792,22 @@ def create_signal_message_new_55(symbol, price, all_timeframes_signals, volume, 
     return message, dominant_signal, target_price, stop_loss, stop_loss_str, leverage, None
 
 async def async_get_historical_data(symbol, interval, lookback):
-    """Binance Futures'den geçmiş verileri asenkron çek"""
+    """Binance Futures'den geçmiş verileri asenkron çek - retry mekanizması ile"""
     if not symbol.endswith('USDT'):
         symbol = symbol + 'USDT'
     
     url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={lookback}"
+    
+    # Retry mekanizması ile API isteği
+    connector = aiohttp.TCPConnector(limit=10, limit_per_host=5, ttl_dns_cache=300)
+    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+    
     try:
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=10)) as session:
-            async with session.get(url, ssl=False) as resp:
-                if resp.status != 200:
-                    raise Exception(f"Futures API hatası: {resp.status} - {await resp.text()}")
-                klines = await resp.json()
-                if not klines or len(klines) == 0:
-                    raise Exception(f"{symbol} için futures veri yok")
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            klines = await api_request_with_retry(session, url, ssl=False, max_retries=CONFIG["API_RETRY_ATTEMPTS"])
+            
+            if not klines or len(klines) == 0:
+                raise Exception(f"{symbol} için futures veri yok")
     except Exception as e:
         raise Exception(f"Futures veri çekme hatası: {symbol} - {interval} - {str(e)}")
     

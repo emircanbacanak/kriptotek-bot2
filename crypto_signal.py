@@ -13,6 +13,9 @@ import json
 import aiohttp
 from dotenv import load_dotenv
 import os
+import time
+import builtins
+from collections import deque
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, DuplicateKeyError
 from decimal import Decimal, ROUND_DOWN, getcontext
@@ -38,6 +41,35 @@ CONFIG = {
     "COOLDOWN_MINUTES": 30,  # Çok fazla sinyal bulunduğunda bekleme süresi
 
 }
+
+LOG_RATE_LIMIT = int(os.getenv("LOG_RATE_LIMIT", "200"))
+LOG_RATE_WINDOW_SECONDS = float(os.getenv("LOG_RATE_WINDOW_SECONDS", "1.0"))
+LOG_SUPPRESS_NOTICE_SECONDS = float(os.getenv("LOG_SUPPRESS_NOTICE_SECONDS", "5.0"))
+_LOG_TIMESTAMPS = deque()
+_LAST_LOG_SUPPRESS_NOTICE = 0.0
+_ORIGINAL_PRINT = builtins.print
+
+def rate_limited_print(*args, **kwargs):
+    global _LAST_LOG_SUPPRESS_NOTICE
+    force_log = kwargs.pop("force_log", False)
+
+    if LOG_RATE_LIMIT <= 0 or force_log:
+        return _ORIGINAL_PRINT(*args, **kwargs)
+
+    now = time.monotonic()
+    while _LOG_TIMESTAMPS and now - _LOG_TIMESTAMPS[0] > LOG_RATE_WINDOW_SECONDS:
+        _LOG_TIMESTAMPS.popleft()
+
+    if len(_LOG_TIMESTAMPS) >= LOG_RATE_LIMIT:
+        if now - _LAST_LOG_SUPPRESS_NOTICE > LOG_SUPPRESS_NOTICE_SECONDS:
+            _LAST_LOG_SUPPRESS_NOTICE = now
+            _ORIGINAL_PRINT("⚠️ Log limiti aşıldı, fazla loglar bastırılıyor...", flush=True)
+        return
+
+    _LOG_TIMESTAMPS.append(now)
+    return _ORIGINAL_PRINT(*args, **kwargs)
+
+builtins.print = rate_limited_print
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -730,18 +762,6 @@ async def check_signal_cooldown(symbol):
     except Exception as e:
         print(f"❌ Sinyal cooldown durumu kontrol edilirken hata: {e}")
         return False
-async def clear_signal_cooldown(symbol):
-    """Belirli bir sembolün cooldown durumunu temizler."""
-    try:
-        if mongo_collection is None:
-            if not connect_mongodb():
-                return False
-        
-        mongo_collection.delete_one({"_id": f"signal_cooldown_{symbol}"})
-        return True
-    except Exception as e:
-        print(f"❌ Sinyal cooldown temizlenirken hata: {e}")
-        return False
 async def get_expired_cooldown_signals():
     """Cooldown süresi biten sinyalleri döndürür ve temizler."""
     try:
@@ -771,37 +791,6 @@ async def get_expired_cooldown_signals():
     except Exception as e:
         print(f"❌ Süresi biten cooldown sinyalleri alınırken hata: {e}")
         return []
-
-async def get_volumes_for_symbols(symbols):
-    """Belirtilen semboller için hacim verilerini Binance'den çeker."""
-    try:
-        volumes = {}
-        for symbol in symbols:
-            try:
-                ticker_data = client.futures_ticker(symbol=symbol)
-                
-                # API bazen liste döndürüyor, bazen dict
-                if isinstance(ticker_data, list):
-                    if len(ticker_data) == 0:
-                        volumes[symbol] = 0
-                        continue
-                    ticker = ticker_data[0]  # İlk elementi al
-                else:
-                    ticker = ticker_data
-                
-                if ticker and isinstance(ticker, dict) and 'quoteVolume' in ticker:
-                    volumes[symbol] = float(ticker['quoteVolume'])
-                else:
-                    volumes[symbol] = 0
-                    
-            except Exception as e:
-                print(f"⚠️ {symbol} hacim verisi alınamadı: {e}")
-                volumes[symbol] = 0
-        
-        return volumes
-    except Exception as e:
-        print(f"❌ Hacim verileri alınırken hata: {e}")
-        return {symbol: 0 for symbol in symbols}
 
 def save_admin_groups():
     """Admin gruplarını MongoDB'ye kaydet"""
@@ -1621,6 +1610,53 @@ def format_price(price, ref_price=None):
         else:
             return f"{price:.10f}".rstrip('0').rstrip('.')
 
+def build_active_signal_from_position(symbol, position):
+    try:
+        entry_price = float(position.get("open_price", 0))
+        target_price = float(position.get("target", 0))
+        stop_price = float(position.get("stop", 0))
+    except (TypeError, ValueError):
+        return None
+
+    if entry_price <= 0 or target_price <= 0 or stop_price <= 0:
+        return None
+
+    current_price_raw = position.get("current_price", entry_price)
+    current_price_float = clean_price(current_price_raw, entry_price)
+    leverage = int(position.get("leverage", CONFIG["LEVERAGE"]))
+    signal_time = position.get("entry_time", datetime.now().strftime('%Y-%m-%d %H:%M'))
+
+    return {
+        "symbol": symbol,
+        "type": position.get("type", "ALIŞ"),
+        "entry_price": format_price(entry_price, entry_price),
+        "entry_price_float": entry_price,
+        "target_price": format_price(target_price, entry_price),
+        "stop_loss": format_price(stop_price, entry_price),
+        "signals": position.get("signals", {}),
+        "leverage": leverage,
+        "signal_time": signal_time,
+        "current_price": format_price(current_price_float, entry_price),
+        "current_price_float": current_price_float,
+        "last_update": datetime.now().strftime('%Y-%m-%d %H:%M'),
+        "status": position.get("status", "active"),
+        "trigger_type": position.get("trigger_type")
+    }
+
+def restore_active_signal_from_position(symbol, position):
+    global active_signals, global_active_signals
+
+    rebuilt_signal = build_active_signal_from_position(symbol, position)
+    if not rebuilt_signal:
+        print(f"⚠️ {symbol} → Pozisyondan aktif sinyal oluşturulamadı, veri eksik veya geçersiz")
+        return False
+
+    active_signals[symbol] = rebuilt_signal
+    global_active_signals[symbol] = rebuilt_signal
+    save_active_signals_to_db({symbol: rebuilt_signal})
+    print(f"♻️ {symbol} → Pozisyon verilerinden aktif sinyal yeniden oluşturuldu")
+    return True
+
 def format_volume(volume):
     """Hacmi bin, milyon, milyar formatında formatla"""
     if volume >= 1_000_000_000:
@@ -2203,7 +2239,8 @@ async def check_signal_potential(symbol, positions, stop_cooldown, timeframes, t
         if current_signals is None:
             return None
         
-        buy_count, sell_count = calculate_signal_counts(current_signals, tf_names, symbol)
+        buy_count, sell_count, signal_values = calculate_signal_counts(current_signals, tf_names)
+        log_signal_snapshot(symbol, tf_names, signal_values, buy_count, sell_count)
         
         # BTC ve ETH için 5/7 kuralı, diğerleri için 7/7 kuralı kontrol
         is_major_coin = symbol in ['BTCUSDT', 'ETHUSDT']
@@ -3052,7 +3089,7 @@ async def signal_processing_loop():
                     except Exception as e:
                         print(f"⚠️ {symbol} active_signal silinirken hata: {e}")
             
-            # TERS DURUM KONTROLÜ: Pozisyon var ama aktif sinyal yok - orfan pozisyonları temizle
+            # TERS DURUM KONTROLÜ: Pozisyon var ama aktif sinyal yok - pozisyondan yeniden oluştur
             # Optimizasyon: Toplu MongoDB sorgusu
             orphaned_positions = []
             if positions:
@@ -3063,18 +3100,20 @@ async def signal_processing_loop():
                 for symbol in list(positions.keys()):
                     active_signal_exists = symbol in existing_signal_symbols
                     if symbol not in active_signals or not active_signal_exists:
-                        print(f"⚠️ {symbol} → Aktif sinyali yok, orfan pozisyon temizleniyor")
+                        print(f"⚠️ {symbol} → Aktif sinyali yok, pozisyondan yeniden oluşturulacak")
                         orphaned_positions.append(symbol)
-                        del positions[symbol]
             
-            # Orphaned pozisyonları veritabanından da sil
             if orphaned_positions:
                 for symbol in orphaned_positions:
-                    try:
-                        mongo_collection.delete_one({"_id": f"position_{symbol}"})
-                        print(f"✅ {symbol} position veritabanından silindi")
-                    except Exception as e:
-                        print(f"⚠️ {symbol} position silinirken hata: {e}")
+                    position_data = positions.get(symbol)
+                    if not position_data:
+                        print(f"⚠️ {symbol} → Pozisyon verisi bulunamadı, yeniden oluşturma atlandı")
+                        continue
+                    restored = restore_active_signal_from_position(symbol, position_data)
+                    if restored:
+                        print(f"✅ {symbol} → Orfan pozisyon için aktif sinyal yeniden oluşturuldu")
+                    else:
+                        print(f"⚠️ {symbol} → Aktif sinyal yeniden oluşturulamadı, pozisyon korunuyor")
             
             # Her 30 döngüde bir pozisyon kontrolü yap (yaklaşık 5 dakikada bir)
             position_check_counter += 1
@@ -4408,23 +4447,19 @@ async def calculate_signals_for_symbol(symbol, timeframes, tf_names):
     
     return current_signals
 
-def calculate_signal_counts(signals, tf_names, symbol=None):
+def log_signal_snapshot(symbol, tf_names, signal_values, buy_count, sell_count, prefix="Sinyal sayımı"):
+    symbol_info = f" ({symbol})" if symbol else ""
+    print(f"🔍 {prefix}{symbol_info}: {tf_names}")
+    print(f"   Sinyal değerleri: {signal_values}")
+    print(f"   LONG sayısı: {buy_count}, SHORT sayısı: {sell_count}")
+
+def calculate_signal_counts(signals, tf_names):
     """Sinyal sayılarını hesaplar"""
     signal_values = [signals.get(tf, 0) for tf in tf_names]
     buy_count = sum(1 for s in signal_values if s == 1)
     sell_count = sum(1 for s in signal_values if s == -1)
-    
-    symbol_info = f" ({symbol})" if symbol else ""
-    print(f"🔍 Sinyal sayımı{symbol_info}: {tf_names}")
-    print(f"   Sinyal değerleri: {signal_values}")
-    print(f"   LONG sayısı: {buy_count}, SHORT sayısı: {sell_count}")
-    return buy_count, sell_count
+    return buy_count, sell_count, signal_values
 
-def check_7_7_rule(buy_count, sell_count):
-    """7/7 kuralını kontrol eder - tüm 7 zaman dilimi aynı yönde olmalı"""
-    result = buy_count == 7 or sell_count == 7
-    print(f"🔍 7/7 kural kontrolü: LONG={buy_count}, SHORT={sell_count} → Sonuç: {result}")
-    return result
 
 def check_signal_rule(buy_count, sell_count, required_signals, symbol):
     """Esnek sinyal kuralını kontrol eder - BTC/ETH için 6/7, diğerleri için 7/7"""
@@ -4445,7 +4480,7 @@ def check_major_coin_signal_rule(symbol, current_signals, previous_signals):
     tf_names = ['15m', '30m', '1h', '2h', '4h', '8h', '1d']
     
     # Mevcut sinyal sayılarını hesapla
-    buy_count, sell_count = calculate_signal_counts(current_signals, tf_names, symbol)
+    buy_count, sell_count, _ = calculate_signal_counts(current_signals, tf_names)
     
     print(f"🔍 {symbol} → Major coin 5/7 kural kontrolü: LONG={buy_count}, SHORT={sell_count}")
     
@@ -4501,10 +4536,6 @@ def check_15m_changed(symbol, current_signals, previous_signals):
         return False
 
 def check_cooldown(symbol, cooldown_dict, hours=4):
-    """
-    Bir sembolün cooldown sözlüğünde olup olmadığını kontrol eder.
-    Temizleme işlemi artık ana döngüdeki 'cleanup_expired_stop_cooldowns' tarafından yapılıyor.
-    """
     if symbol in cooldown_dict:
         # Sembol sözlükte varsa, hala cooldown'dadır.
         return True
@@ -4512,10 +4543,6 @@ def check_cooldown(symbol, cooldown_dict, hours=4):
     return False
 
 def add_stop_cooldown_safe(symbol, stop_cooldown_dict):
-    """
-    Stop cooldown eklerken mevcut cooldown'ı kontrol eder.
-    Aynı kripto için yeni stop/hedelf olduğunda cooldown SIFIRLANIR (uzatılmaz).
-    """
     current_time = datetime.now()
     new_cooldown_end = current_time + timedelta(hours=CONFIG["COOLDOWN_HOURS"])
     

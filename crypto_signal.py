@@ -1588,15 +1588,50 @@ async def setup_bot():
     print("Bot handler'ları kuruldu!")
 
 def format_price(price, ref_price=None):
+    # Fiyat değerine göre minimum ondalık basamak belirle
+    def get_min_decimals(p):
+        if p >= 100:
+            return 2   # 100+ için minimum 2 basamak
+        elif p >= 1:
+            return 4   # 1-100 için minimum 4 basamak  
+        elif p >= 0.01:
+            return 5   # 0.01-1 için minimum 5 basamak (0.48 -> 0.48000 yerine gerçek değer)
+        elif p >= 0.0001:
+            return 6   # 0.0001-0.01 için minimum 6 basamak
+        else:
+            return 8   # Çok küçük fiyatlar için 8 basamak
+    
     if ref_price is not None:
         s = str(ref_price)
         if 'e' in s or 'E' in s:
             s = f"{ref_price:.20f}".rstrip('0').rstrip('.')
         if '.' in s:
             dec = len(s.split('.')[-1])
+            
+            # MİNİMUM ONDALIK BASAMAK GARANTİSİ
+            min_dec = get_min_decimals(ref_price)
+            if dec < min_dec:
+                dec = min_dec
+            
+            # KRİTİK FIX: Eğer hedef/stop fiyat giriş fiyatından farklıysa ama aynı ondalık basamakta 
+            # yuvarlandığında aynı görünürse, daha fazla ondalık basamak kullan
             getcontext().prec = dec + 8
-            d_price = Decimal(str(price)).quantize(Decimal('1.' + '0'*dec), rounding=ROUND_DOWN)
-            return format(d_price, f'.{dec}f').rstrip('0').rstrip('.') if dec > 0 else str(int(d_price))
+            d_price_original = Decimal(str(price)).quantize(Decimal('1.' + '0'*dec), rounding=ROUND_DOWN)
+            d_ref = Decimal(str(ref_price)).quantize(Decimal('1.' + '0'*dec), rounding=ROUND_DOWN)
+            
+            # Eğer yuvarlanmış fiyat referans fiyatla aynı ama ham fiyat farklıysa
+            # daha fazla ondalık basamak kullan (en fazla +3 basamak ekstra)
+            if d_price_original == d_ref and abs(price - ref_price) > 1e-12:
+                for extra_dec in range(1, 4):
+                    new_dec = dec + extra_dec
+                    d_price_new = Decimal(str(price)).quantize(Decimal('1.' + '0'*new_dec), rounding=ROUND_DOWN)
+                    d_ref_new = Decimal(str(ref_price)).quantize(Decimal('1.' + '0'*new_dec), rounding=ROUND_DOWN)
+                    if d_price_new != d_ref_new:
+                        dec = new_dec
+                        d_price_original = d_price_new
+                        break
+            
+            return format(d_price_original, f'.{dec}f').rstrip('0').rstrip('.') if dec > 0 else str(int(d_price_original))
         else:
             return str(int(round(price)))
     else:
@@ -4810,7 +4845,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
         if message_sent_key in position_processing_flags:
             flag_time = position_processing_flags[message_sent_key]
             time_diff = (datetime.now() - flag_time).total_seconds()
-            if time_diff < 60:  # Son 60 saniye içinde gönderilmişse
+            if time_diff < 28800:  # Son 8 saat içinde gönderilmişse (cooldown süresiyle aynı)
                 print(f"⚠️ {symbol} - {trigger_type} mesajı zaten gönderilmiş ({int(time_diff)} saniye önce), tekrar gönderilmiyor.")
                 return
         
@@ -4823,7 +4858,7 @@ async def close_position(symbol, trigger_type, final_price, signal, position_dat
                     if flag_timestamp:
                         flag_time = datetime.fromisoformat(flag_timestamp) if isinstance(flag_timestamp, str) else flag_timestamp
                         time_diff = (datetime.now() - flag_time).total_seconds()
-                        if time_diff < 60:  # Son 60 saniye içinde gönderilmişse
+                        if time_diff < 28800:  # Son 8 saat içinde gönderilmişse (cooldown süresiyle aynı)
                             print(f"⏸️ {symbol} → Hedef mesajı MongoDB'de kayıtlı ({int(time_diff)} saniye önce), çift gönderme önlendi")
                             return
         except Exception as e:

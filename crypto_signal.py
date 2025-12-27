@@ -3213,6 +3213,18 @@ async def signal_processing_loop():
             # Aktif pozisyonları ve cooldown'daki coinleri korumalı semboller listesine ekle
             protected_symbols = set(positions.keys()) | set(stop_cooldown.keys())
             
+            # 🔴 KAPALI SAAT KONTROLÜ - Binance API çağrısından ÖNCE kontrol et
+            # Türkiye saati kontrolü - 23:15-03:15 arasında yeni sinyal arama yapma
+            # NOT: monitor_signals() ayrı döngüde çalışıyor ve aktif pozisyonları takip etmeye devam ediyor
+            if not is_signal_search_time:
+                print(f"🚫 Türkiye saati {turkey_time.strftime('%H:%M')} - Yeni sinyal arama kapalı (23:15-03:15)")
+                print(f"   📊 Aktif pozisyonlar ({len(positions)}): monitor_signals() tarafından takip ediliyor")
+                print(f"   ⏳ Binance'den yeni coin verisi çekilMİYOR (API tasarrufu)")
+                
+                # Aktif pozisyonlar monitor_signals() tarafından takip ediliyor, burada sadece bekle
+                await asyncio.sleep(CONFIG["MAIN_LOOP_SLEEP_SECONDS"])
+                continue
+            
             # Sinyal arama için kullanılacak sembolleri filtrele
             # STOP COOLDOWN'DAKİ COİNLERİ KESİNLİKLE SİNYAL ARAMA LİSTESİNE EKLEME!
             print(f"🔍 Cooldown filtresi uygulanıyor... Mevcut cooldown sayısı: {len(stop_cooldown)}")
@@ -3284,14 +3296,7 @@ async def signal_processing_loop():
                 print("🚀 YENİ SİNYAL ARAMA BAŞLATILIYOR (aktif sinyal varken de devam eder)")
                 signal_processing_loop._first_signal_search = False
             
-            # Türkiye saati kontrolü - 23:15-03:15 arasında yeni sinyal arama yapma
-            if not is_signal_search_time:
-                print(f"🚫 Türkiye saati {turkey_time.strftime('%H:%M')} - Yeni sinyal arama kapalı (23:15-03:15)")
-                print(f"   Mevcut sinyaller kontrol edilmeye devam ediyor, cooldown sayacı azalıyor...")
-                
-                # Mevcut sinyalleri kontrol etmeye devam et ama yeni sinyal arama
-                await asyncio.sleep(CONFIG["MAIN_LOOP_SLEEP_SECONDS"])
-                continue
+            # NOT: Kapalı saat kontrolü artık yukarıda (API çağrısından ÖNCE) yapılıyor
             
             # Sinyal bulma mantığı - tüm uygun sinyalleri topla
             found_signals = {}  # Bulunan tüm sinyaller bu sözlükte toplanacak
